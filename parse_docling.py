@@ -1,5 +1,5 @@
 '''
-Docling에서는 본문 섹션에 집중
+Docling 에서는 본문 섹션에 집중
 '''
 import re
 from collections import Counter
@@ -8,7 +8,9 @@ from docling.document_converter import DocumentConverter # type: ignore
 
 
 '''
-프로토 타입에서 정크헤드들 모음
+프로토 타입 논문들 중에 확실한 정크들 제거, 수기로 작성하기 때문에 너무 안걸러지는 것 들만 나중에 추가
+
+r 이건 정규펴현식 백슬래시가 있으면 붙여주면 좋음
 '''
 CONFIRMED_JUNK_PATTERNS = [
     r"^PAPER$",
@@ -19,10 +21,10 @@ CONFIRMED_JUNK_PATTERNS = [
 
 _confirmed_junk_re = re.compile("|".join(CONFIRMED_JUNK_PATTERNS), re.IGNORECASE)
 
+
 '''
 정크 텍스트, 제목들이 되는 기준 설정 + 정크 부분 없애기(수기)
 '''
-
 MIN_TEXT_LEN = 10
 JUNK_HEAD_REPEAT_THRESHOLD = 4
 INNER_DUP_THRESHOLD = 0.8
@@ -41,9 +43,49 @@ def confirmed_junk (text: str) -> bool:
     return bool(_confirmed_junk_re.match(text))
 
 '''
-Docling 진행
+docling 메인 함수로, 받아온 파일을 각각 함수로 보내서 정크제거, 세분화 작업 진행하고 최종 형태로 return
 '''
+def parse_docling(pdf_path: str, min_repeat: int = JUNK_HEAD_REPEAT_THRESHOLD) -> dict:
+    converter = DocumentConverter()
+    result = converter.convert(pdf_path)
+    doc = result.document
+ 
+    raw = build_raw_section(doc)
+ 
+    junk_heads, head_stats = detect_junk_header(raw, min_repeat=min_repeat)
+    sections, rem_junk = filter_junk_headers(raw, junk_heads)
+    sections, rem_inner = clean_sections_inner(sections)
+    sections, rem_sec = dedupe_sections(sections)
+ 
+    final = []
+    for sec in sections:
+        if sec["head"] and len(sec["text"]) >= MIN_TEXT_LEN:
+            final.append({"n": None, "head": sec["head"], "text": sec["text"]})
+ 
+    return {
+        "sections": final,
+        "_removed": rem_junk + rem_inner + rem_sec,
+        "_stats": {
+            "raw_sections": len(raw),
+            "after_junk_filter": len(sections) + len(rem_junk),
+            "final_sections": len(final),
+            "head_frequencies": head_stats,
+            "junk_heads_detected": list(junk_heads),
+        }
+    }
 
+
+'''
+Docling을 진행하여 받아온 raw 파일을 우리가 원하는 형태로 좀더 세분화 하는 작업 
+
+# Docling의 판단 로직 (대략)
+if 폰트_크기 > 14pt and 굵기 == bold:
+    label = "section_header"  # ← 섹션 헤더다!
+elif 일반_텍스트:
+    label = "text"  # ← 일반 텍스트다
+
+도클링 자체에서 이런 방식으로 section_header, text 같은걸 구별하는데 이걸 이용하여 우리가 보기 좋게 리스트 형식으로 만든다.
+'''
 def build_raw_section(doc) -> list[dict]:
     sections = []
     current = {"head": None, "text_parts": []}
@@ -70,10 +112,10 @@ def build_raw_section(doc) -> list[dict]:
     flush()
     return sections
 
-'''
-빈도기반 정크헤더 없애기(자동)
-'''
 
+'''
+빈도기반 정크헤더 필터링
+'''
 def detect_junk_header(sections: list[dict], min_repeat: int = JUNK_HEAD_REPEAT_THRESHOLD) -> tuple[set[str], dict]:
     head_counter = Counter()
     for sec in sections:
@@ -84,10 +126,10 @@ def detect_junk_header(sections: list[dict], min_repeat: int = JUNK_HEAD_REPEAT_
     junk_heads = {h for h, count in head_counter.items() if count >= min_repeat}
     return junk_heads, dict(head_counter)
 
-'''
-확실한 정크 + 빈도기반 정크헤더 필터링
-'''
 
+'''
+확실한 정크 + 빈도기반 정크헤더 없애기
+'''
 def filter_junk_headers (sections: list[dict], junk_heads: set[str]) -> tuple[list[dict], list[dict]]:
     kept = []
     removed = []
@@ -110,10 +152,10 @@ def filter_junk_headers (sections: list[dict], junk_heads: set[str]) -> tuple[li
  
     return kept, removed
 
+
 '''
 섹션 내부 문단 중복 제거
 '''
-
 def dedupe_within_section(text: str) -> tuple[str, int]:
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     if len(paragraphs) <= 1:
@@ -151,7 +193,6 @@ def clean_sections_inner(sections: list[dict]) -> tuple[list[dict], list[dict]]:
 '''
 섹션 헤드간 중복제거
 '''
-
 def _head_related(h1: str, h2: str) -> bool:
     """헤더가 같거나 포함관계인지 판정."""
     a = (h1 or "").strip().lower()
@@ -190,45 +231,10 @@ def dedupe_sections(sections: list[dict]) -> tuple[list[dict], list[dict]]:
  
     return kept, removed
 
-def parse_docling(pdf_path: str, min_repeat: int = JUNK_HEAD_REPEAT_THRESHOLD) -> dict:
 
-    converter = DocumentConverter()
-    result = converter.convert(pdf_path)
-    doc = result.document
- 
-    # 1차: section_header 경계로 묶기
-    raw = build_raw_section(doc)
- 
-    # 2차: 빈도 기반 junk header 탐지 (핵심 — 자동화)
-    junk_heads, head_stats = detect_junk_header(raw, min_repeat=min_repeat)
-    sections, rem_junk = filter_junk_headers(raw, junk_heads)
- 
-    # 3차: 섹션 내부 중복 제거
-    sections, rem_inner = clean_sections_inner(sections)
- 
-    # 4차: 섹션 간 중복 제거
-    sections, rem_sec = dedupe_sections(sections)
- 
-    # 최종 정리
-    final = []
-    for sec in sections:
-        if sec["head"] and len(sec["text"]) >= MIN_TEXT_LEN:
-            final.append({"n": None, "head": sec["head"], "text": sec["text"]})
- 
-    return {
-        "sections": final,
-        "_removed": rem_junk + rem_inner + rem_sec,
-        "_stats": {
-            "raw_sections": len(raw),
-            "after_junk_filter": len(sections) + len(rem_junk),
-            "final_sections": len(final),
-            "head_frequencies": head_stats,
-            "junk_heads_detected": list(junk_heads),
-        }
-    }
-
-
-
+'''
+결과 확인용
+'''
 def main():
     import argparse
     import json
