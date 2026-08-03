@@ -5,7 +5,6 @@ import sys
 import json
 import argparse
 from lxml import etree # type: ignore
-from parse_summary import print_summary
 
 
 '''
