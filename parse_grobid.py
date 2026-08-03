@@ -4,7 +4,7 @@ Grobid에서는 본문을 제외한 제목 / 초록 / 참고문헌 등을 참고
 import sys
 import json
 import argparse
-from lxml import etree
+from lxml import etree # type: ignore
 from parse_summary import print_summary
 
 
@@ -28,7 +28,7 @@ request.post() -> 데이터를 서버에 전송 / files, data 등은 어떤 파�
 .raise_for_status() -> 에러가 있나 확인 200 번호대면 성공
 '''
 def call_grobid(pdf_path: str, server: str) -> bytes:
-    import requests
+    import requests # type: ignore
     url = f"{server.rstrip('/')}/api/processFulltextDocument"
 
     with open(pdf_path, "rb") as f:
@@ -129,4 +129,65 @@ def parse_tei(tei_bytes: bytes) -> dict:
     }
 
 
+'''
+결과 확인용
+'''
+def main():
+    import argparse
+    import json
+    import os
+    
+    ap = argparse.ArgumentParser(description="Grobid + TEI 파싱으로 논문 메타데이터 추출")
+    ap.add_argument("pdf", help="파싱할 PDF 경로")
+    ap.add_argument("--server", default="http://localhost:8070", 
+                   help="Grobid 서버 주소 (기본값: http://localhost:8070)")
+    ap.add_argument("--show-json", action="store_true", help="전체 결과를 JSON으로 출력")
+    args = ap.parse_args()
+    
+    print(f"Parsing {args.pdf} with Grobid...")
+    
+    # 1단계: Grobid 파싱
+    try:
+        tei_bytes = call_grobid(args.pdf, args.server)
+    except Exception as e:
+        print(f"❌ Grobid 파싱 실패: {e}")
+        return
+    
+    # 2단계: TEI 파싱
+    result = parse_tei(tei_bytes)
+    
+    print("=" * 70)
+    print(f"[제목] {result['title']}")
+    if result['doi']:
+        print(f"[DOI] {result['doi']}")
+    print("=" * 70)
+    
+    if result['abstract']:
+        print(f"\n[초록]\n{result['abstract'][:200]}...")
+    
+    print(f"\n[섹션] {len(result['sections'])}개")
+    for i, sec in enumerate(result['sections']):
+        print(f"  {i+1:2d}) {sec['head'] or '(제목 없음)'}  — {len(sec['text'])}자")
+    
+    print(f"\n[참고문헌] {len(result['references'])}개")
+    
+    if args.show_json:
+        print("\n[전체 결과 JSON]")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    
+    print("=" * 70)
+    
+    # 파일 저장
+    os.makedirs("results", exist_ok=True)
+    
+    # PDF 파일명에서 확장자 제외하고 가져오기
+    pdf_filename = os.path.splitext(os.path.basename(args.pdf))[0]
+    output_file = f"results/{pdf_filename}_grobid.json"
+    
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    print(f"\n✅ 결과 저장: {output_file}")
 
+
+if __name__ == "__main__":
+    main()
