@@ -26,6 +26,7 @@ def load_model():
     model = SentenceTransformer(MODEL_NAME)
     return model
 
+
 '''
 청크들 벡터화
 '''
@@ -48,13 +49,8 @@ def embed_chunks(model, chunks: list[dict], batch_size: int = BATCH_SIZE, includ
 
 
 '''
-누적 저장(upsert) 관련 함수들
-------------------------------
-chunk_sections.py에서 한 것과 똑같은 원리.
-vectors.json 파일 하나에 여러 논문 벡터를 계속 쌓기 위함.
-기존 파일 읽고 -> 이번 paper_id의 옛날 벡터는 지우고 -> 새 벡터 합쳐서 -> 다시 저장.
+chunk_sections.py에서 한 것과 똑같이 하나의 vectors.json 파일에 벡터 데이터들을 누적해서 저장
 '''
-
 ## 파일이 없으면 그냥 빈 리스트로 시작 (vectors.json 처음 만들 때 대비)
 def load_existing_vectors(path: str) -> list[dict]:
     if not os.path.exists(path):
@@ -73,15 +69,7 @@ def upsert_vectors_store(path: str, paper_id: str, new_vectors: list[dict]) -> l
 
 
 '''
-python3 embedding.py results/chunks.json \
-    --paper-id 2019_faradaic \
-    --out results/vectors.json \
-    --with-text => 이부분은 나중에 텍스트 확인하고싶을때만 사용하면됨. 그냥 확인용임
-
-## paper_id를 지정하면 chunks.json(누적된 전체 청크) 중에서
-## 그 논문 것만 골라서 임베딩하고, vectors.json에 그 논문 부분만 갱신함.
-## 여러 논문을 전부 (다시) 임베딩하고 싶으면 --all 사용:
-python3 embedding.py results/chunks.json --all --out results/vectors.json
+테스트 및 결과 확인용~
 '''
 
 def main():
