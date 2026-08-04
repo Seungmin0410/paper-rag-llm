@@ -202,12 +202,8 @@ def build_chunks(doc: dict, paper_id: str, target_size: int = TARGET_CHUNK_SIZE,
 
 
 '''
-누적 저장(upsert) 관련 함수들
-------------------------------
-목표: chunks.json / sections_store.json 파일 하나에 여러 논문을 계속 쌓기.
-방법: 기존 파일을 읽고 -> 이번에 처리하는 paper_id의 옛날 데이터는 지우고
-      -> 새로 만든 데이터를 합쳐서 -> 다시 저장.
-(같은 논문을 다시 돌리면 그 논문 부분만 교체되고, 다른 논문은 그대로 남음)
+논문 청킹한걸 chunk.json 한파일에 누적해서 저장
+만약에 같은 논문을 다시 grobid, docling 해서 다시 청킹하면 이전거 삭제되고 자동으로 새로운 것만 저장
 '''
 ## 파일이 없으면 그냥 빈 리스트로 시작 -> chunks.json 처음 만들 때 대비
 def load_existing_list(path: str) -> list[dict]:
@@ -216,7 +212,7 @@ def load_existing_list(path: str) -> list[dict]:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-## 파일이 없으면 그냥 빈 딕셔너리로 시작 (sections_store.json 처음 만들 때 대비)
+## 파일이 없으면 그냥 빈 딕셔너리로 시작 -> sections_store.json 처음 만들 때 대비
 def load_existing_dict(path: str) -> dict:
     if not os.path.exists(path):
         return {}
