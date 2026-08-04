@@ -3,9 +3,8 @@ import re
 import argparse
 import os
 
-
 '''
-설정값
+설정값 - 청크사이즈나 겹침 사이즈는 청킹해보고 결정
 '''
 TARGET_CHUNK_SIZE = 700
 MIN_CHUNK_SIZE = 50
@@ -13,26 +12,30 @@ OVERLAP_SIZE = 80
 
 
 '''
-섹션 원문을 어떻게 쪼갤지 준비
+섹션 원문을 문단 별로 쪼개기
 '''
 def split_into_paragraphs(text: str) -> list[str]:
-    paras = [p.strip() for p in text.split("\n\n") if p.strip()]
+    paras = []
+    for p in text.split("\n\n"):
+        if p.strip():
+            paras.append(p.strip())
     return paras
+
 
 '''
 화학식 정규화: 유니코드 아래첨자(₀₁₂...)를 일반 숫자로 통일.
 예) "Cu₂O" -> "Cu2O", "CO₂" -> "CO2"
 이걸 안 하면 원문엔 아래첨자로 써있는데 질문은 일반 숫자로 쓰는 경우
 글자 자체가 달라서 벡터 유사도가 미묘하게 떨어질 수 있음.
-청킹하기 전에 제일 먼저 이 정규화부터 거치게 함.
+청킹하기 전에 제일 먼저 이 정규화 작업 꼭필요함
 '''
 SUBSCRIPT_MAP = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
-
 def normalize_chemical_formula(text: str) -> str:
     return text.translate(SUBSCRIPT_MAP)
 
+
 '''
-표 감지: 이 문단이 "표"처럼 생겼는지 대충 판단.
+표 감지
 Docling이 표를 문단이랑 구분 안 해주고 그냥 텍스트로 섞어서 줄 때가 있어서,
 패턴으로 표를 추정해서 따로 처리함 (표는 안 자르고 통째로 한 조각 유지하기 위함).
 
@@ -60,6 +63,11 @@ def is_table_like(paragraph: str) -> bool:
             numeric_like_lines += 1
 
     return (numeric_like_lines / len(lines)) >= 0.5
+
+
+'''
+너무 긴 문단은 미리 잘라두기
+'''
 def split_oversized_paragraph(paragraph: str, max_size: int) -> list[str]:
     if len(paragraph) <= max_size:
         return [paragraph]
@@ -77,19 +85,22 @@ def split_oversized_paragraph(paragraph: str, max_size: int) -> list[str]:
         pieces.append(current.strip())
     return pieces if pieces else [paragraph]
 
+
 '''
 Greddy Packing - 하나의 큰 청크를 여러 개의 작은 청크로 나눔
 표(table)로 판단되는 문단은 예외적으로 안 자르고 그 자체로 하나의 청크가 됨.
 '''
 def chunk_section_text(text: str, target_size: int = TARGET_CHUNK_SIZE, overlap_size: int = OVERLAP_SIZE) -> list[str]:
-    text = normalize_chemical_formula(text)  ## 청킹하기 전에 화학식부터 정규화 (Cu₂O -> Cu2O)
 
+    '''
+    논문 청킹하기전 text 정규화작업 및 문단 별로 text 분리
+    '''
+    text = normalize_chemical_formula(text)  
     paragraphs = split_into_paragraphs(text)
+
     if not paragraphs:
         return[]
-
-    ## 표 문단은 split_oversized_paragraph를 태우면 안 되니까 여기서 미리 구분해둠.
-    ## (일반 문단, 표 문단) 튜플 리스트로 만들어서 아래 패킹 단계에서 다르게 처리
+    
     normalized = []
     for p in paragraphs:
         if is_table_like(p):
@@ -98,21 +109,27 @@ def chunk_section_text(text: str, target_size: int = TARGET_CHUNK_SIZE, overlap_
             for piece in split_oversized_paragraph(p, target_size * 2):
                 normalized.append((piece, False))
 
+    '''
+    최종 정보가 모아지는 장소
+    '''
     chunks = []
     current_parts = []
     current_len = 0
 
-## 오버랩 
     for para, is_table in normalized:
-        ## 표는 통째로 자기 혼자만의 청크로 만듦 (앞뒤 문단이랑 안 섞이게)
+        '''
+        표는 크기와 상관없이 하나로 간주
+        '''
         if is_table:
             if current_parts:
                 chunks.append("\n\n".join(current_parts).strip())
                 current_parts = []
                 current_len = 0
-            chunks.append(para)   ## 표는 크기 상관없이 그대로 청크 하나로 확정
+            chunks.append(para)   
             continue
-
+        '''
+        일반 문단인 경우 target_size 만큼 자르고 overlap 적용해주기
+        '''
         if current_len + len(para) > target_size and current_parts:
             chunks.append("\n\n".join(current_parts).strip())
             overlap_text = current_parts[-1][-overlap_size:] if overlap_size > 0 else ""
@@ -123,7 +140,7 @@ def chunk_section_text(text: str, target_size: int = TARGET_CHUNK_SIZE, overlap_
         current_len += len(para)
 
     if current_parts:
-        last_chunk = "\n\n".join(current_parts).strip() ## 마지막 청크가 너무 짧으면 이전 청크에 붙이기
+        last_chunk = "\n\n".join(current_parts).strip() 
  
         if len(last_chunk) < MIN_CHUNK_SIZE and chunks:
             chunks[-1] = (chunks[-1] + "\n\n" + last_chunk).strip()
@@ -134,28 +151,32 @@ def chunk_section_text(text: str, target_size: int = TARGET_CHUNK_SIZE, overlap_
 
 
 '''
-논문 여러 개를 같은 파일에 누적 저장하려면 section_id("sec_0")만으로는
-서로 다른 논문끼리 겹쳐버림 (둘 다 sec_0이 있을 수 있으니까).
-그래서 여기서부터 paper_id를 매개변수로 받아서, 어느 논문 것인지 표시해줌.
+grobid + docling 이  완료된 doc 파일을 받아와서 청킹 시작.
+
+본격적인 청킹을 시작하기전에 각 논문마다 paper_id 를 부여해서 저장할때 비교가능하게 준비 -> chunck_section_text 로 청킹 시작
 '''
 def build_chunks(doc: dict, paper_id: str, target_size: int = TARGET_CHUNK_SIZE, overlap_size: int = OVERLAP_SIZE) -> tuple[dict, list[dict]]:
+    '''
+    sections_store -> 나중에 llm 참고용으로 섹션 전체를 저장 (부모)
+    all_chunks -> 청킹을 해서 모아둘 딕션어리 (자식)
+    '''
     sections_store = {}
     all_chunks = []
 
     paper_title = doc.get("title", "")
     paper_doi = doc.get("doi", "")
 
+    '''
+    우선은 한 파일에 .json 형태로 모든 논문의 정보를 저장하는데 이때 논문별로 구별해주기 위해서 paper_id로 각각 논문을 구별
+    '''
     for sec_idx, sec in enumerate(doc.get("sections", [])):
         head = sec.get("head") or "(제목없음)"
         text = sec.get("text", "")
         section_id = f"sec_{sec_idx}"
-
-        ## sections_store의 key를 "paper_id::section_id"로 만들어서
-        ## 논문이 여러 개 섞여도 안 겹치게 함 (예: "2019_faradaic::sec_0")
         store_key = f"{paper_id}::{section_id}"
 
         sections_store[store_key] = {
-            "paper_id": paper_id,     ## 어느 논문 섹션인지 표시
+            "paper_id": paper_id,     
             "section_id": section_id,
             "head": head,
             "text": text,
@@ -163,11 +184,14 @@ def build_chunks(doc: dict, paper_id: str, target_size: int = TARGET_CHUNK_SIZE,
             "paper_doi": paper_doi,
         }
 
+        '''
+        chunk_section_text로 논문 청킹해오고 아래 형태로 저장
+        '''
         pieces = chunk_section_text(text, target_size=target_size, overlap_size=overlap_size)
 
         for chunk_idx, piece in enumerate(pieces):
             all_chunks.append({
-                "paper_id": paper_id,       ## 청크에도 어느 논문 것인지 표시
+                "paper_id": paper_id,       
                 "section_id": section_id,    
                 "chunk_index": chunk_idx,      
                 "chunk_total": len(pieces),   
@@ -185,8 +209,7 @@ def build_chunks(doc: dict, paper_id: str, target_size: int = TARGET_CHUNK_SIZE,
       -> 새로 만든 데이터를 합쳐서 -> 다시 저장.
 (같은 논문을 다시 돌리면 그 논문 부분만 교체되고, 다른 논문은 그대로 남음)
 '''
-
-## 파일이 없으면 그냥 빈 리스트로 시작 (chunks.json 처음 만들 때 대비)
+## 파일이 없으면 그냥 빈 리스트로 시작 -> chunks.json 처음 만들 때 대비
 def load_existing_list(path: str) -> list[dict]:
     if not os.path.exists(path):
         return []
@@ -221,9 +244,8 @@ def upsert_sections_store(path: str, paper_id: str, new_sections: dict) -> dict:
 
 
 '''
-테스팅용~
+결과 확인 및 테스팅용~
 '''
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("input", help="merged JSON 경로 (parse_grobid+parse_docling 병합 결과)")
