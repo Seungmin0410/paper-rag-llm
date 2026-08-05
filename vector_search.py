@@ -31,7 +31,7 @@ def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
 
 
 '''
-질문 벡터랑 저장된 모든 벡터를 비교해서 유사도 top-k개 뽑기
+질문 벡터랑 저장된 모든 벡터를 비교해서 유사도 top-k개 뽑기 -> 현재는 3개로 설정함
 '''
 def search_top_k(query_vector, vectors: list[dict], top_k: int = 3) -> list[dict]:
     scored = []
@@ -110,12 +110,7 @@ def dedupe_sections(enriched_results: list[dict]) -> list[dict]:
 
 
 '''
-python3 vector_search.py \
-    --chunks results/chunks.json \
-    --vectors results/vectors.json \
-    --sections results/sections_store.json \
-    --query "전극 재료로 뭘 썼어?" \
-    --top-k 3
+args -> 프로그램 시작할때 사용자가 입력한 옵션값들을 담아놓는 보관함
 '''
 
 def main():
@@ -127,6 +122,9 @@ def main():
     ap.add_argument("--top-k", type=int, default=3, help="검색할 청크 개수 (기본값: 3)")
     args = ap.parse_args()
 
+    '''
+    실제 임베딩된 데이터를 가져옴
+    '''
     with open(args.chunks, "r", encoding="utf-8") as f:
         chunks = json.load(f)
     with open(args.vectors, "r", encoding="utf-8") as f:
@@ -134,13 +132,12 @@ def main():
     with open(args.sections, "r", encoding="utf-8") as f:
         sections_store = json.load(f)
 
+    '''
+    실제 데이터들로 작업 수행
+    '''
     model = load_model()
-
-    ## 질문도 chunks랑 똑같이 정규화해서 벡터화 (그래야 내적 = 코사인 유사도가 됨)
     query_vector = model.encode([args.query], normalize_embeddings=True)[0].tolist()
-
     top_results = search_top_k(query_vector, vectors, top_k=args.top_k)
-
     chunk_lookup = build_chunk_lookup(chunks)
     enriched = attach_context(top_results, chunk_lookup, sections_store)
     sections_for_llm = dedupe_sections(enriched)
