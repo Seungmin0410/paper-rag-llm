@@ -71,7 +71,6 @@ def upsert_vectors_store(path: str, paper_id: str, new_vectors: list[dict]) -> l
 '''
 테스트 및 결과 확인용~
 '''
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("input", help="chunk_sections.py가 (누적) 저장한 chunks.json 경로")
