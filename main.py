@@ -54,6 +54,9 @@ def make_paper_id_from_filename(pdf_path: str) -> str:
     return pid
 
 
+'''
+grobid + docling 필요한 부분들만 가져와서 합치기
+'''
 def merge_results(grobid_doc: dict, docling_out: dict) -> dict:
     '''
     title/doi/abstract -> Grobid
@@ -68,7 +71,9 @@ def merge_results(grobid_doc: dict, docling_out: dict) -> dict:
         "references": len(grobid_doc.get("references", [])),
     }
 
-
+'''
+메인 함수
+'''
 def run_pipeline(pdf_path: str, paper_id: str, server: str,
                   results_dir: str = "results",
                   target_size: int = 700, overlap: int = 80,
