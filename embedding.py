@@ -64,7 +64,7 @@ def upsert_vectors_store(path: str, paper_id: str, new_vectors: list[dict]) -> l
     kept = [v for v in existing if v.get("paper_id") != paper_id]  ## 이 논문의 옛날 벡터는 버림
     merged = kept + new_vectors
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(merged, f, ensure_ascii=False, indent=2)
+        json.dump(merged, f, ensure_ascii=False)
     return merged
 
 
