@@ -9,6 +9,8 @@
 5) 청크들을 임베딩 (embedding.py) -> vectors.json 자동저장
 6) 전부 results/ 폴더에 누적 저장
 
+python3 main.py papers/'papers_name'.pdf -> 새로운 논문 추가하면 자동으로 저장됨.
+
 **진행사항**
 
 - 검색결과 LLM에 넘겨서 답변 정확도 확인
