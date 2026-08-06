@@ -38,8 +38,8 @@ python3 vector_search.py --query "묻고싶은 질문" --top-k 5 -> 이 질문�
 
 **주요 알고리즘**
 
-parse_grobid + parse_docling -> 논문 파싱   
-chunk_section -> greedy packing, 화학식 정규화, 표 감지.  
-embedding -> bge-m3 임베딩 모델
-bm25_index -> bm25 검색을 위한 텍스트 전처리
+parse_grobid + parse_docling -> 논문 파싱     
+chunk_section -> greedy packing, 화학식 정규화, 표 감지.    
+embedding -> bge-m3 임베딩 모델  
+bm25_index -> bm25 검색을 위한 텍스트 전처리  
 vector_search -> bge-m3 + BM25 하이브리드 벡터 유사도 검색, RRF. 
