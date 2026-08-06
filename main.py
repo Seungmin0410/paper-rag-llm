@@ -36,7 +36,7 @@ from parse_grobid import call_grobid, parse_tei
 from parse_docling import parse_docling
 from chunk_section import build_chunks, upsert_chunks_store, upsert_sections_store
 from embedding import load_model, embed_chunks, upsert_vectors_store
-
+from bm25_index import build_bm25_entries, upsert_bm25_store
 
 '''
 paper_id를 --paper-id 없이 넣었을 때, PDF 파일명에서 자동으로 만들어주는 함수
@@ -139,6 +139,18 @@ def run_pipeline(pdf_path: str, paper_id: str, server: str,
     print(f"  이번 논문 청크 수: {len(chunks)}")
     print(f"  누적 저장됨 (청크): {chunks_path} (전체 {len(all_chunks)}개)")
     print(f"  누적 저장됨 (섹션): {sections_path} (전체 {len(all_sections)}개)")
+
+    '''
+    bm25 부분 추가
+    '''
+    print("\n" + "=" * 70)
+    print(f"[BM25] 키워드 검색 인덱스 생성 중...")
+    print("=" * 70)
+    bm25_path = os.path.join(results_dir, "bm25_corpus.json")
+    bm25_entries = build_bm25_entries(chunks)
+    all_bm25 = upsert_bm25_store(bm25_path, paper_id, bm25_entries)
+    print(f"  이번 논문 BM25 엔트리: {len(bm25_entries)}개")
+    print(f"  누적 저장됨 (BM25): {bm25_path} (전체 {len(all_bm25)}개)")
 
     # === 5) 임베딩 ===
     if skip_embedding:
