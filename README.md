@@ -22,5 +22,5 @@
 ---
 **명령어 정리**
 
-python3 main.py papers/'papers_name'.pdf -> 새로운 논문 추가하면 자동으로 저장됨.
+python3 main.py papers/'papers_name'.pdf -> 새로운 논문 추가하면 자동으로 저장됨.    
 python3 vector_search.py --query "묻고싶은 질문" --top-k 5 -> 이 질문을 벡터로 바꿨을 때, 저장된 청크중 어떤 게 유사도가 가장높은지 보여줌.
