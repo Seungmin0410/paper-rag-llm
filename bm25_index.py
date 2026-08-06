@@ -8,6 +8,8 @@ BM25 검색용 전처리 - 소문자 통일, 영문/숫자/한글만 남기고 �
 '''
 def tokenize_for_bm25(text: str) -> list[list]:
     text = text.lower()
+    text = re.sub(r'(?<=[0-9])(?=[가-힣])', ' ', text)
+    text = re.sub(r'(?<=[가-힣])(?=[0-9])', ' ', text)
     text = re.sub(r"[^a-z0-9가-힣\s]", " ", text)
     tokens = text.split()
     return tokens
@@ -45,3 +47,30 @@ def upsert_bm25_store(path: str, paper_id: str, new_entries: list[dict]) -> list
     with open(path, "w", encoding="utf-8") as f:
         json.dump(merged, f, ensure_ascii=False)
     return merged
+
+
+'''
+테스트 및 결과 확인용~
+'''
+def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("input", help="chunks.json 경로")
+    ap.add_argument("--out", default="results/bm25_corpus.json", help="BM25 결과 저장 경로")
+    args = ap.parse_args()
+
+    with open(args.input, "r", encoding="utf-8") as f:
+        all_chunks = json.load(f)
+
+    paper_ids = sorted(set(c["paper_id"] for c in all_chunks))
+    print(f"발견된 논문: {paper_ids}")
+
+    for pid in paper_ids:
+        target_chunks = [c for c in all_chunks if c["paper_id"] == pid]
+        entries = build_bm25_entries(target_chunks)
+        all_entries = upsert_bm25_store(args.out, pid, entries)
+        print(f"[{pid}] {len(entries)}개 엔트리 -> 누적 저장됨 (전체 {len(all_entries)}개)")
+
+
+if __name__ == "__main__":
+    main()
