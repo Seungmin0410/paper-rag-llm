@@ -28,9 +28,10 @@ python3 main.py papers/'papers_name'.pdf -> 새로운 논문 추가하면 자동
 
 python3 chunk_section.py results/논문이름_merged.json --paper-id 논문이름 --out-chunks results/chunks.json --out-sections results/sections_store.json -> 청킹만 따로 다시하고싶을때
 
-python3 bm25_index.py results/chunks.json --out results/bm25_corpus.json -> 각 청크의 텍스트를 BM25 검색용으로 전처리
-python3 embedding.py results/chunks.json --paper-id 논문이름 --out results/vectors.json -> 임베딩만 다로 다시하고 싶을때
-python3 embedding.py results/chunks.json --all --out results/vectors.json -> 전체 논문 임베딩 다시 하고싶을때
+python3 bm25_index.py results/chunks.json --out results/bm25_corpus.json -> 각 청크의 텍스트를 BM25 검색용으로 전처리  
+python3 embedding.py results/chunks.json --paper-id 논문이름 --out results/vectors.json -> 임베딩만 다로 다시하고 싶을때  
+python3 embedding.py results/chunks.json --all --out results/vectors.json -> 전체 논문 임베딩 다시 하고싶을때  
+
 python3 vector_search.py --query "묻고싶은 질문" --top-k 5 -> 이 질문을 벡터로 바꿨을 때, 저장된 청크중 어떤 게 유사도가 가장높은지 보여줌.
 
 ---
