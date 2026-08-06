@@ -1,6 +1,7 @@
 import json
 import argparse
 import sys
+from bm25_index import tokenize_for_bm25
 
 MODEL_NAME = "BAAI/bge-m3"   ## embedding.py랑 반드시 같은 모델 써야함 (다르면 벡터 비교 불가능)
 
@@ -46,6 +47,63 @@ def search_top_k(query_vector, vectors: list[dict], top_k: int = 3) -> list[dict
 
     scored.sort(key=lambda x: x["score"], reverse=True)   ## 유사도 높은 순으로 정렬
     return scored[:top_k]
+
+
+'''
+BM25 검색 -> bm25_corpus.json에 저장된 토큰들로 BM250kapi 인덱스를 즉석에서 만들고, 질문도 똑같이 토큰화해서 점수 매김
+'''
+def search_bm25_top_k(query: str, bm25_entries: list[dict], top_k: int = 3) -> list[dict]:
+    try:
+        from rank_bm25 import BM25Okapi #type: ignore
+    except ImportError:
+        print("rank_bm25가 설치되어 있지 않습니다.")
+        print("설치: pip install rank_bm25 --break-system-packages")
+        sys.exit(1)
+
+    corpus_tokens = [e["tokens"] for e in bm25_entries]
+    bm25 = BM25Okapi(corpus_tokens)
+
+    query_tokens = tokenize_for_bm25(query)   ## bm25_index.py와 동일한 전처리 (소문자 통일 등)
+    scores = bm25.get_scores(query_tokens)
+
+    scored = []
+    for entry, score in zip(bm25_entries, scores):
+        scored.append({
+            "paper_id": entry["paper_id"],
+            "section_id": entry["section_id"],
+            "chunk_index": entry["chunk_index"],
+            "score": float(score),
+        })
+
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return scored[:top_k]
+
+
+'''
+RRF(Reciprocal Rank Funsion) -> 벡터 검색 순위 리스트와 BM25 순위 리스트를 합침, 점수를 산정하는 방식이 벡터 유사도와 BM25 점수가 다르기 때문에 순위르 기반으로 산정 
+'''
+def reciprocal_rank_fusion(vector_results: list[dict], bm25_results: list[dict], k: int = 60) -> list[dict]:
+    rrf_scores = {}   ## key: (paper_id, section_id, chunk_index) -> 누적 RRF 점수
+
+    for rank, item in enumerate(vector_results):
+        key = (item["paper_id"], item["section_id"], item["chunk_index"])
+        rrf_scores[key] = rrf_scores.get(key, 0) + 1 / (k + rank + 1)
+
+    for rank, item in enumerate(bm25_results):
+        key = (item["paper_id"], item["section_id"], item["chunk_index"])
+        rrf_scores[key] = rrf_scores.get(key, 0) + 1 / (k + rank + 1)
+
+    fused = []
+    for (paper_id, section_id, chunk_index), score in rrf_scores.items():
+        fused.append({
+            "paper_id": paper_id,
+            "section_id": section_id,
+            "chunk_index": chunk_index,
+            "score": score,
+        })
+
+    fused.sort(key=lambda x: x["score"], reverse=True)
+    return fused
 
 
 '''
@@ -112,14 +170,19 @@ def dedupe_sections(enriched_results: list[dict]) -> list[dict]:
 '''
 args -> 프로그램 시작할때 사용자가 입력한 옵션값들을 담아놓는 보관함
 '''
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--chunks", default="results/chunks.json", help="chunk_sections.py가 만든 chunks.json 경로")
     ap.add_argument("--vectors", default="results/vectors.json", help="embedding.py가 만든 vectors.json 경로")
     ap.add_argument("--sections", default="results/sections_store.json", help="chunk_sections.py가 만든 sections_store.json 경로")
+    ap.add_argument("--bm25", default="results/bm25_corpus.json", help="bm25_index.py가 만든 bm25_corpus.json 경로")   ## ★ 추가
     ap.add_argument("--query", required=True, help="사용자 질문")
     ap.add_argument("--top-k", type=int, default=3, help="검색할 청크 개수 (기본값: 3)")
+    ap.add_argument("--candidate-k", type=int, default=15,   
+                     help="벡터/BM25 각각에서 후보로 뽑을 개수 (기본값: 15) -> 이후 RRF로 합쳐서 --top-k개로 압축")
+    ap.add_argument("--no-hybrid", action="store_true",   
+                     help="벡터 검색만 쓰고 BM25는 끄기 (기존 방식과 비교용)")
+    
     args = ap.parse_args()
 
     '''
@@ -137,9 +200,20 @@ def main():
     '''
     model = load_model()
     query_vector = model.encode([args.query], normalize_embeddings=True)[0].tolist()
-    top_results = search_top_k(query_vector, vectors, top_k=args.top_k)
-    chunk_lookup = build_chunk_lookup(chunks)
-    enriched = attach_context(top_results, chunk_lookup, sections_store)
+    vector_results = search_top_k(query_vector, vectors, top_k=args.candidate_k)
+
+    if args.no_hybrid:
+        final_results = vector_results[:args.top_k]
+        print("(--no-hybrid 지정됨: 벡터 검색만 사용)")
+    else:
+        with open(args.bm25, "r", encoding="utf-8") as f:
+            bm25_entries = json.load(f)
+        bm25_results = search_bm25_top_k(args.query, bm25_entries, top_k=args.candidate_k)
+        fused = reciprocal_rank_fusion(vector_results, bm25_results, k=60)
+        final_results = fused[:args.top_k]
+
+    chunk_lookup = build_chunk_lookup(chunks)   ## ★ 추가 (빠져있었음)
+    enriched = attach_context(final_results, chunk_lookup, sections_store)
     sections_for_llm = dedupe_sections(enriched)
 
     # --- 확인용 출력 ---
@@ -150,14 +224,14 @@ def main():
     print("=" * 70)
 
     for r in enriched:
-        print(f"\n[유사도 {r['score']:.4f}] ({r['paper_id']}) {r['section_head']} (청크 #{r['chunk_index']})")
+        print(f"\n[점수 {r['score']:.4f}] ({r['paper_id']}) {r['section_head']} (청크 #{r['chunk_index']})")
         print(f"  {r['chunk_text'][:150]}...")
 
     print("\n" + "=" * 70)
     print("LLM에게 전달할 섹션 원문 (중복 제거됨):")
     print("=" * 70)
     for s in sections_for_llm:
-        print(f"\n### [{s['paper_id']}] {s['section_head']} (최고 유사도 {s['best_score']:.4f})")
+        print(f"\n### [{s['paper_id']}] {s['section_head']} (최고 점수 {s['best_score']:.4f})")
         print(f"섹션 길이: {len(s['section_text'])}자")
 
 
