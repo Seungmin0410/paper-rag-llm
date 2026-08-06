@@ -167,6 +167,32 @@ def build_chunks(doc: dict, paper_id: str, target_size: int = TARGET_CHUNK_SIZE,
     paper_doi = doc.get("doi", "")
 
     '''
+    청킹, 임베딩 부분에 abstract 추가
+    '''
+    abstract_text = doc.get("abstract", "")
+    if abstract_text:
+        section_id = "sec_abstract"
+        store_key = f"{paper_id}::{section_id}"
+        sections_store[store_key] = {
+            "paper_id": paper_id,
+            "section_id": section_id,
+            "head": "Abstract",
+            "text": abstract_text,
+            "paper_title": paper_title,
+            "paper_doi": paper_doi,
+        }
+        pieces = chunk_section_text(abstract_text, target_size=target_size, overlap_size=overlap_size)
+        for chunk_idx, piece in enumerate(pieces):
+            all_chunks.append({
+                "paper_id": paper_id,
+                "section_id": section_id,
+                "chunk_index": chunk_idx,
+                "chunk_total": len(pieces),
+                "chunk_text": piece,
+                "chunk_char_len": len(piece),
+            })
+
+    '''
     우선은 한 파일에 .json 형태로 모든 논문의 정보를 저장하는데 이때 논문별로 구별해주기 위해서 paper_id로 각각 논문을 구별
     '''
     for sec_idx, sec in enumerate(doc.get("sections", [])):
