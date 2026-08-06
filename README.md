@@ -9,7 +9,7 @@
 5) 청크들을 임베딩 (embedding.py) -> vectors.json 자동저장
 6) 전부 results/ 폴더에 누적 저장
 
-python3 main.py papers/'papers_name'.pdf -> 새로운 논문 추가하면 자동으로 저장됨.
+---
 
 **진행사항 및 개선방향**
 
@@ -19,3 +19,8 @@ python3 main.py papers/'papers_name'.pdf -> 새로운 논문 추가하면 자동
 - LangGraph 검증 루프 추가 (LangGraph 쓸거면 Tavily 같은 검색전용 API 가져오는것도 방법)
 - 내용이 부족하다면 인터넷 검색 추가(검색 유사도가 낮을때, LLM 자체적으로 답을 못찾겠다고 판단했을때, 질문 자체가 논문 범위를 넘어설 경우)
 
+---
+**명령어 정리**
+
+python3 main.py papers/'papers_name'.pdf -> 새로운 논문 추가하면 자동으로 저장됨.
+python3 vector_search.py --query "묻고싶은 질문" --top-k 5 -> 이 질문을 벡터로 바꿨을 때, 저장된 청크중 어떤 게 유사도가 가장높은지 보여줌.
