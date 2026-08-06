@@ -13,14 +13,33 @@
 
 **진행사항 및 개선방향**
 
-- 검색결과 LLM에 넘겨서 답변 정확도 확인
-- 이미지, 표, 그래프 해석 부분 추가
-- BM25 하이브리드 검색 추가
+- 검색결과 LLM에 넘겨서 답변 정확도 확인 (현재 진행중)
+- 이미지, 그래프 해석 부분 추가
 - LangGraph 검증 루프 추가 (LangGraph 쓸거면 Tavily 같은 검색전용 API 가져오는것도 방법)
 - 내용이 부족하다면 인터넷 검색 추가(검색 유사도가 낮을때, LLM 자체적으로 답을 못찾겠다고 판단했을때, 질문 자체가 논문 범위를 넘어설 경우)
 
 ---
+
 **명령어 정리**
 
-python3 main.py papers/'papers_name'.pdf -> 새로운 논문 추가하면 자동으로 저장됨.
+논문들은 paper-rag-llm 파일 안에 papers에 저장 되어 있고 모든 결과 값들은 results 파일 안에 저장 되어 있다.  
+
+python3 main.py papers/'papers_name'.pdf -> 새로운 논문 추가하면 자동으로 저장됨.   
+
+python3 chunk_section.py results/논문이름_merged.json --paper-id 논문이름 --out-chunks results/chunks.json --out-sections results/sections_store.json -> 청킹만 따로 다시하고싶을때
+
+python3 bm25_index.py results/chunks.json --out results/bm25_corpus.json -> 각 청크의 텍스트를 BM25 검색용으로 전처리
+python3 embedding.py results/chunks.json --paper-id 논문이름 --out results/vectors.json -> 임베딩만 다로 다시하고 싶을때
+python3 embedding.py results/chunks.json --all --out results/vectors.json -> 전체 논문 임베딩 다시 하고싶을때
+
 python3 vector_search.py --query "묻고싶은 질문" --top-k 5 -> 이 질문을 벡터로 바꿨을 때, 저장된 청크중 어떤 게 유사도가 가장높은지 보여줌.
+
+---
+
+**주요 알고리즘**
+
+parse_grobid + parse_docling -> 논문 파싱   
+chunk_section -> greedy packing, 화학식 정규화, 표 감지.  
+embedding -> bge-m3 임베딩 모델
+bm25_index -> bm25 검색을 위한 텍스트 전처리
+vector_search -> bge-m3 + BM25 하이브리드 벡터 유사도 검색, RRF. 
