@@ -53,7 +53,7 @@ def build_prompt(query: str, sections: list[dict]) -> str:
 '''
 def call_claude_api(prompt: str, model: str = "claude-sonnet-4-6") -> str:
     try:
-        import anthropic 
+        import anthropic #type: ignore
     except ImportError:
         print("anthropic 패키지가 설치되어 있지 않습니다.")
         print("설치: pip install anthropic --break-system-packages")
