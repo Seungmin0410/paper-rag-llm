@@ -8,6 +8,7 @@ from vector_search import (
     build_chunk_lookup,
     attach_context,
     dedupe_sections,
+    format_tables_and_figures,   # 추가: vector_search.py에 이미 있는 함수를 가져다 씀
 )
 
 
@@ -19,9 +20,14 @@ from vector_search import (
 def build_prompt(query: str, sections: list[dict]) -> str:
     context_parts = []
     for s in sections:
-        context_parts.append(
-            f"### [{s['paper_id']}] {s['section_head']}\n{s['section_text']}"
-        )
+        section_block = f"### [{s['paper_id']}] {s['section_head']}\n{s['section_text']}"
+
+        # 추가: 표/그림도 프롬프트에 같이 넣기 (안 넣으면 LLM이 표 데이터를 아예 못 봄)
+        tf_text = format_tables_and_figures(s.get("section_tables", []), s.get("section_figures", []))
+        if tf_text:
+            section_block += f"\n\n{tf_text}"
+
+        context_parts.append(section_block)
     context_text = "\n\n".join(context_parts)
 
     '''
