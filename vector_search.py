@@ -132,6 +132,8 @@ def attach_context(top_results: list[dict], chunk_lookup: dict, sections_store: 
             "chunk_text": chunk_lookup.get(chunk_key, "(청크 원문을 찾지 못함)"),
             "section_head": section_data.get("head", "(제목없음)"),
             "section_text": section_data.get("text", "(섹션 원문을 찾지 못함)"),
+            "section_tables": section_data.get("tables", []),      # 내가 추가: sections_store에 이미 저장돼있던 표 데이터를 여기서도 꺼내오기
+            "section_figures": section_data.get("figures", []),    # 내가 추가: 그림 데이터도 동일하게 꺼내오기 (안 꺼내면 dedupe_sections에서 사라짐)
             "paper_title": section_data.get("paper_title", ""),
         })
     return enriched
@@ -152,6 +154,8 @@ def dedupe_sections(enriched_results: list[dict]) -> list[dict]:
                 "section_id": r["section_id"],
                 "section_head": r["section_head"],
                 "section_text": r["section_text"],
+                "section_tables": r["section_tables"],      # 내가 추가: attach_context에서 넣어준 표 데이터를 여기서도 이어받기
+                "section_figures": r["section_figures"],    # 내가 추가: 그림 데이터도 이어받기
                 "best_score": r["score"],
                 "matched_chunks": [],
             }
@@ -165,6 +169,29 @@ def dedupe_sections(enriched_results: list[dict]) -> list[dict]:
     sections = list(by_section.values())
     sections.sort(key=lambda x: x["best_score"], reverse=True)
     return sections
+
+
+'''
+내가 추가: 섹션에 딸린 표/그림을 LLM 프롬프트에 넣을 수 있는 문자열로 변환
+표는 caption+markdown 그대로, 그림은 caption 있는 것만 (build_figure_chunks랑 동일한 원칙)
+'''
+def format_tables_and_figures(tables: list[dict], figures: list[dict]) -> str:
+    parts = []
+
+    for table in tables:
+        caption = table.get("caption") or ""
+        md = table.get("markdown", "")
+        if caption and md.strip().startswith(caption.strip()):
+            parts.append(md.strip())
+        else:
+            parts.append(f"{caption}\n\n{md}".strip())
+
+    for fig in figures:
+        caption = fig.get("caption")
+        if caption:   ## caption 없는 그림(로고 등 추정)은 프롬프트에 안 넣음
+            parts.append(caption)
+
+    return "\n\n".join(p for p in parts if p)
 
 
 '''
@@ -185,9 +212,6 @@ def main():
     
     args = ap.parse_args()
 
-    '''
-    실제 임베딩된 데이터를 가져옴
-    '''
     with open(args.chunks, "r", encoding="utf-8") as f:
         chunks = json.load(f)
     with open(args.vectors, "r", encoding="utf-8") as f:
@@ -195,9 +219,6 @@ def main():
     with open(args.sections, "r", encoding="utf-8") as f:
         sections_store = json.load(f)
 
-    '''
-    실제 데이터들로 작업 수행
-    '''
     model = load_model()
     query_vector = model.encode([args.query], normalize_embeddings=True)[0].tolist()
     vector_results = search_top_k(query_vector, vectors, top_k=args.candidate_k)
@@ -212,7 +233,7 @@ def main():
         fused = reciprocal_rank_fusion(vector_results, bm25_results, k=60)
         final_results = fused[:args.top_k]
 
-    chunk_lookup = build_chunk_lookup(chunks)   ## ★ 추가 (빠져있었음)
+    chunk_lookup = build_chunk_lookup(chunks)
     enriched = attach_context(final_results, chunk_lookup, sections_store)
     sections_for_llm = dedupe_sections(enriched)
 
@@ -228,11 +249,15 @@ def main():
         print(f"  {r['chunk_text'][:150]}...")
 
     print("\n" + "=" * 70)
-    print("LLM에게 전달할 섹션 원문 (중복 제거됨):")
+    print("LLM에게 전달할 섹션 원문 (중복 제거됨, 아래를 복사해서 사용):")
     print("=" * 70)
     for s in sections_for_llm:
-        print(f"\n### [{s['paper_id']}] {s['section_head']} (최고 점수 {s['best_score']:.4f})")
-        print(f"섹션 길이: {len(s['section_text'])}자")
+        print(f"\n### [{s['paper_id']}] {s['section_head']}")
+        print(s['section_text'])
+        # 내가 추가: 표/그림도 잘리지 않고 전체 내용 그대로 출력 (복붙용)
+        tf_text = format_tables_and_figures(s["section_tables"], s["section_figures"])
+        if tf_text:
+            print(f"\n{tf_text}")
 
 
 if __name__ == "__main__":
