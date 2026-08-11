@@ -43,6 +43,10 @@ Docling이 표를 문단이랑 구분 안 해주고 그냥 텍스트로 섞어�
   1) "Table 1", "Table 2." 처럼 표 캡션으로 시작하는 경우
   2) 숫자/구분자(탭, 파이프, 여러 칸 공백)가 촘촘하게 반복되는 줄이 많은 경우
      (표를 텍스트로 뽑으면 보통 이런 모양이 됨)
+
+참고: 이제 parse_docling.py가 표를 sec["tables"]에 별도로 구조화해서 넘겨주기 때문에
+     text 안에 표가 섞여 들어올 일은 많이 줄었지만, Docling이 못 잡아낸 표 잔여물이나
+     텍스트 안에 끼어든 표 흔적을 대비해서 이 감지 로직은 그대로 유지함.
 '''
 TABLE_CAPTION_RE = re.compile(r'^\s*(Table|표)\s*S?\d+', re.IGNORECASE)
 
@@ -151,6 +155,63 @@ def chunk_section_text(text: str, target_size: int = TARGET_CHUNK_SIZE, overlap_
 
 
 '''
+parse_docling.py가 넘겨준 sec["tables"] 리스트를 청크로 변환.
+표는 캡션과 마크다운을 합쳐서 통째로 청크 1개로 만듦 (쪼개면 행/열 구조가 깨지기 때문).
+캡션 없는 표는 거의 없다고 판단해서 별도 필터링 없이 다 살림.
+'''
+def build_table_chunks(tables: list[dict], paper_id: str, section_id: str) -> list[dict]:
+    table_chunks = []
+    for t_idx, table in enumerate(tables):
+        caption = table.get("caption") or ""
+        md = table.get("markdown", "")
+
+        ## Docling이 표를 뽑을 때 캡션 문구까지 markdown 안에 같이 담는 경우가 있어서,
+        ## 이미 markdown 앞부분에 캡션이 포함돼 있으면 중복으로 안 붙임
+        if caption and md.strip().startswith(caption.strip()):
+            chunk_text = md.strip()
+        else:
+            chunk_text = f"{caption}\n\n{md}".strip()
+
+        if not chunk_text:
+            continue
+
+        table_chunks.append({
+            "paper_id": paper_id,
+            "section_id": section_id,
+            "chunk_index": f"table_{t_idx}",
+            "chunk_total": len(tables),
+            "chunk_text": chunk_text,
+            "chunk_char_len": len(chunk_text),
+            "chunk_type": "table",
+        })
+    return table_chunks
+
+
+'''
+parse_docling.py가 넘겨준 sec["figures"] 리스트를 청크로 변환.
+캡션 있는 그림만 청크로 만듦. 캡션 없는 그림은 저널 로고/장식 아이콘일 가능성이 높다고 판단해서 건너뜀.
+'''
+def build_figure_chunks(figures: list[dict], paper_id: str, section_id: str) -> list[dict]:
+    figure_chunks = []
+    for f_idx, fig in enumerate(figures):
+        caption = fig.get("caption")
+
+        if not caption:
+            continue   ## 캡션 없는 그림(로고 등 추정)은 청크로 안 만듦
+
+        figure_chunks.append({
+            "paper_id": paper_id,
+            "section_id": section_id,
+            "chunk_index": f"figure_{f_idx}",
+            "chunk_total": len(figures),
+            "chunk_text": caption,
+            "chunk_char_len": len(caption),
+            "chunk_type": "figure",
+        })
+    return figure_chunks
+
+
+'''
 grobid + docling 이  완료된 doc 파일을 받아와서 청킹 시작.
 
 본격적인 청킹을 시작하기전에 각 논문마다 paper_id 를 부여해서 저장할때 비교가능하게 준비 -> chunck_section_text 로 청킹 시작
@@ -190,6 +251,7 @@ def build_chunks(doc: dict, paper_id: str, target_size: int = TARGET_CHUNK_SIZE,
                 "chunk_total": len(pieces),
                 "chunk_text": piece,
                 "chunk_char_len": len(piece),
+                "chunk_type": "text",   ## 추가: 텍스트 청크임을 표시 (표/그림 청크와 구분용)
             })
 
     '''
@@ -198,6 +260,8 @@ def build_chunks(doc: dict, paper_id: str, target_size: int = TARGET_CHUNK_SIZE,
     for sec_idx, sec in enumerate(doc.get("sections", [])):
         head = sec.get("head") or "(제목없음)"
         text = sec.get("text", "")
+        tables = sec.get("tables", [])      ## 추가: parse_docling.py가 만들어둔 표 데이터
+        figures = sec.get("figures", [])    ## 추가: parse_docling.py가 만들어둔 그림 데이터
         section_id = f"sec_{sec_idx}"
         store_key = f"{paper_id}::{section_id}"
 
@@ -206,6 +270,8 @@ def build_chunks(doc: dict, paper_id: str, target_size: int = TARGET_CHUNK_SIZE,
             "section_id": section_id,
             "head": head,
             "text": text,
+            "tables": tables,      ## 추가: 부모 저장소(llm 참고용)에도 표 보존
+            "figures": figures,    ## 추가: 부모 저장소(llm 참고용)에도 그림 보존
             "paper_title": paper_title,
             "paper_doi": paper_doi,
         }
@@ -223,7 +289,16 @@ def build_chunks(doc: dict, paper_id: str, target_size: int = TARGET_CHUNK_SIZE,
                 "chunk_total": len(pieces),   
                 "chunk_text": piece,           
                 "chunk_char_len": len(piece),
+                "chunk_type": "text",   ## 추가: 텍스트 청크임을 표시
             })
+
+        '''
+        추가: 표/그림도 청크로 만들어서 all_chunks에 합류시킴
+        (표는 안 쪼개고 통째로 1개, 그림은 캡션 있는 것만)
+        '''
+        all_chunks.extend(build_table_chunks(tables, paper_id, section_id))
+        all_chunks.extend(build_figure_chunks(figures, paper_id, section_id))
+
     return sections_store, all_chunks
 
 
@@ -295,7 +370,11 @@ def main():
     for c in chunks[:10]:
         store_key = f"{args.paper_id}::{c['section_id']}"
         head = sections_store[store_key]["head"]
-        print(f"  [{head[:40]}] #{c['chunk_index']+1}/{c['chunk_total']} "
+        chunk_type = c.get("chunk_type", "text")  ## 추가: 표/그림/텍스트 구분해서 출력
+        idx_display = c["chunk_index"]
+        if isinstance(idx_display, int):
+            idx_display = idx_display + 1   ## 텍스트 청크는 0-index라 눈으로 보기 좋게 +1
+        print(f"  [{head[:40]}] ({chunk_type}) #{idx_display}/{c['chunk_total']} "
               f"— {c['chunk_char_len']}자")
     if len(chunks) > 10:
         print(f"  ... 외 {len(chunks) - 10}개")
