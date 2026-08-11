@@ -59,8 +59,19 @@ def parse_docling(pdf_path: str, min_repeat: int = JUNK_HEAD_REPEAT_THRESHOLD) -
  
     final = []
     for sec in sections:
-        if sec["head"] and len(sec["text"]) >= MIN_TEXT_LEN:
-            final.append({"n": None, "head": sec["head"], "text": sec["text"]})
+        # 추가: 텍스트가 짧아도 표(tables)나 그림(figures)이 있으면 최종 결과에서 안 빠지게 조건 추가
+        tables = sec.get("tables", [])
+        figures = sec.get("figures", [])
+        has_enough_text = len(sec["text"]) >= MIN_TEXT_LEN
+
+        if sec["head"] and (has_enough_text or tables or figures):
+            final.append({
+                "n": None,
+                "head": sec["head"],
+                "text": sec["text"],
+                "tables": tables,      # 추가: 표 데이터도 최종 결과물에 포함
+                "figures": figures,    # 추가: 그림 메타데이터도 최종 결과물에 포함
+            })
  
     return {
         "sections": final,
@@ -88,25 +99,82 @@ elif 일반_텍스트:
 '''
 def build_raw_section(doc) -> list[dict]:
     sections = []
-    current = {"head": None, "text_parts": []}
+    current = {"head": None, "text_parts": [], "tables": [], "figures" : []}
+    pending_caption = None
+    last_time_ref = None
 
+    # 추가: 텍스트 없이도(표/그림만 있어도) 섹션을 버리지 않도록 flush 조건에 tables/figures 추가
     def flush():
-        if current["head"] is not None or current["text_parts"]:
+        if current["head"] is not None or current["text_parts"] or current["tables"] or current["figures"]:
             sections.append({
                 "head": current["head"],
                 "text": "\n\n".join(current["text_parts"]).strip(),
+                "tables": current["tables"],
+                "figures": current["figures"],
             })
 
     for item, _level in doc.iterate_items():
         label = getattr(item, "label", None)
         text = (getattr(item, "text", "") or "").strip()
+
+        # 변경: table/picture는 text가 비어있어도 처리해야 하므로,
+        #         "text 없으면 continue"를 위로 그냥 두면 안 되고 label별 분기 뒤로 옮겨야 함
+        if label == "section_header":
+            if not text:
+                continue
+            flush()
+            # 변경: 새 섹션 시작할 때 tables/figures 칸도 같이 초기화 (원래 head, text_parts만 있었음)
+            current = {"head": text, "text_parts": [], "tables": [], "figures": []}
+            pending_caption = None   # 추가: 섹션 바뀌면 보류 중이던 캡션은 버림
+            last_time_ref = None     # 추가: 소급 매칭 대상도 초기화
+            continue
+
+        # 추가: caption을 text_parts에 그냥 섞지 않고, 표/그림에 붙일지 판단
+        #         캡션이 표/그림 "뒤"에 나오는 경우 vs "앞"에 나오는 경우 둘 다 대응
+        if label == "caption":
+            if not text:
+                continue
+            if last_time_ref is not None and last_time_ref["caption"] is None:
+                # 케이스: 캡션이 표/그림 "뒤"에 나옴 (예: Figure 3 그림 → 설명 문단)
+                last_time_ref["caption"] = text
+            else:
+                # 케이스: 캡션이 표/그림 "앞"에 나옴 (예: "Table 1. 설명" → 표 본문)
+                pending_caption = text
+            continue
+
+        # 추가: table 라벨을 버리지 않고 별도로 수집 (기존엔 여기 아예 없었음)
+        if label == "table":
+            try:
+                md_table = item.export_to_markdown(doc)  # 표 구조를 살려서 마크다운으로 저장
+            except Exception:
+                md_table = text  # 변환 실패 시 원본 텍스트라도 저장 (fallback)
+
+            table_entry = {
+                "caption": pending_caption,   # 앞서 보류된 caption 있으면 바로 부착
+                "markdown": md_table,
+            }
+            current["tables"].append(table_entry)
+            pending_caption = None
+            last_time_ref = table_entry   # 다음에 caption 나오면 이 표에 소급 부착 가능하도록 기억
+            continue
+
+        # 추가: picture(그림) 라벨도 table과 동일한 방식으로 수집 (기존엔 여기 아예 없었음)
+        if label == "picture":
+            fig_entry = {
+                "caption": pending_caption,
+            }
+            current["figures"].append(fig_entry)
+            pending_caption = None
+            last_time_ref = fig_entry
+            continue
+
+        last_time_ref = None
+
         if not text:
             continue
 
-        if label =="section_header":
-            flush()
-            current = {"head": text, "text_parts": []}
-        elif label in ("text", "caption", "formula"):
+        # 변경: caption은 위에서 이미 따로 처리했으므로 여기 목록에서 제외 (원래는 "text", "caption", "formula"였음)
+        if label in ("text", "formula"):
             current["text_parts"].append(text)
 
     flush()
@@ -137,12 +205,20 @@ def filter_junk_headers (sections: list[dict], junk_heads: set[str]) -> tuple[li
     for sec in sections:
         head = (sec["head"] or "").strip()
         text = sec["text"]
+        # 추가: junk 섹션이 표/그림을 들고 있을 수 있으니 미리 꺼내둠
+        tables = sec.get("tables", [])
+        figures = sec.get("figures", [])
  
         is_junk = head in junk_heads or confirmed_junk(head)
  
         if is_junk:
-            if len(text) >= MIN_TEXT_LEN and kept:
+            # 변경: 텍스트가 짧아도 표/그림이 있으면 "내용 있음"으로 인정 (원래는 text 길이만 봄)
+            has_content = len(text) >= MIN_TEXT_LEN or tables or figures
+            if has_content and kept:
                 kept[-1]["text"] = (kept[-1]["text"] + "\n\n" + text).strip()
+                # 추가: junk 섹션이 갖고 있던 표/그림을 사라지지 않게 앞 섹션으로 이관
+                kept[-1].setdefault("tables", []).extend(tables)
+                kept[-1].setdefault("figures", []).extend(figures)
                 removed.append({"reason": "junk_merged", "head": head, "text_len": len(text)})
             else:
                 removed.append({"reason": "junk_dropped", "head": head, "text_len": len(text)})
@@ -181,6 +257,7 @@ def dedupe_within_section(text: str) -> tuple[str, int]:
     return "\n\n".join(kept).strip(), dropped
 
 def clean_sections_inner(sections: list[dict]) -> tuple[list[dict], list[dict]]:
+    # text 필드만 다루는 함수라 tables/figures는 건드릴 필요 없이 그대로 유지됨
     removed = []
     for sec in sections:
         new_text, dropped = dedupe_within_section(sec["text"])
@@ -216,7 +293,14 @@ def dedupe_sections(sections: list[dict]) -> tuple[list[dict], list[dict]]:
  
         if _head_related(prev["head"], sec["head"]) and text_sim >= SECTION_DUP_THRESHOLD:
             if len(sec["text"]) > len(prev["text"]):
+                # 추가: prev가 버려지기 전에 갖고 있던 표/그림을 sec 쪽으로 이관 (안 그러면 유실됨)
+                sec.setdefault("tables", []).extend(prev.get("tables", []))
+                sec.setdefault("figures", []).extend(prev.get("figures", []))
                 kept[-1] = sec
+            else:
+                # 추가: 반대로 sec가 버려지는 경우엔 sec의 표/그림을 prev 쪽으로 이관
+                kept[-1].setdefault("tables", []).extend(sec.get("tables", []))
+                kept[-1].setdefault("figures", []).extend(sec.get("figures", []))
             removed.append({"reason": "section_dup_removed", "head": sec["head"], 
                            "similarity": round(text_sim, 2)})
             continue
@@ -257,7 +341,10 @@ def main():
     print("=" * 70)
     print(f"[본문 섹션] {len(sections)}개")
     for i, s in enumerate(sections):
-        print(f"  {i+1:2d}) {s['head'][:60]}  — {len(s['text'])}자")
+        # 추가: 표/그림 개수도 같이 출력해서 눈으로 확인 가능하게
+        n_tables = len(s.get("tables", []))
+        n_figures = len(s.get("figures", []))
+        print(f"  {i+1:2d}) {s['head'][:60]}  — {len(s['text'])}자, 표 {n_tables}개, 그림 {n_figures}개")
     print("=" * 70)
  
     if args.show_stats:
