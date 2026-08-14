@@ -1,5 +1,10 @@
 ## 논문 RAG ##
 
+**주의사항**
+질문을 할때 질문 안에 논문 고유의 영어 전문용어(약어, 소재명 등)는 영문 그대로 사용하는게 좋다.
+
+---
+
 **파이프라인**  
 
 1) Grobid로 메타데이터 추출 (title, doi, abstract, references)
@@ -13,10 +18,12 @@
 
 **진행사항 및 개선방향**
 
-- 검색결과 LLM에 넘겨서 답변 정확도 확인 (현재 진행중)
-- 이미지, 그래프 해석 부분 추가
+- 검색결과 LLM에 넘겨서 답변 정확도 확인 (현재 진행중 - 90% 정답률)
+- 이미지, 그래프 해석 부분 추가 (현재 진행중)
 - LangGraph 검증 루프 추가 (LangGraph 쓸거면 Tavily 같은 검색전용 API 가져오는것도 방법)
 - 내용이 부족하다면 인터넷 검색 추가(검색 유사도가 낮을때, LLM 자체적으로 답을 못찾겠다고 판단했을때, 질문 자체가 논문 범위를 넘어설 경우)
+
+앞으로 나아갈 방향성 -> 이 논문 요약해주고 우리 상황이 이러이러한데 내구성 or 탄소포집량을 어캐올려? / 우리상황에선 어떤식으로 접근하는게 좋을까? => 보통 논문을 넣으면 하는 질문이 이거이기때문에 이 질문에 파인튜닝을 해두면 어떨까 / 클로드 되묻기 나 미리 프롬프트 작성해두기
 
 ---
 
@@ -25,14 +32,13 @@
 논문들은 paper-rag-llm 파일 안에 papers에 저장 되어 있고 모든 결과 값들은 results 파일 안에 저장 되어 있다.  
 
 python3 main.py papers/'papers_name'.pdf -> 새로운 논문 추가하면 자동으로 저장됨.   
+python3 rag_llm.py --query "질문내용" --auto   -> 이렇게 하면 API 호출 (--auto 없으면 그냥 복붙해야함)    
 
-python3 chunk_section.py results/논문이름_merged.json --paper-id 논문이름 --out-chunks results/chunks.json --out-sections results/sections_store.json -> 청킹만 따로 다시하고싶을때
-
-python3 bm25_index.py results/chunks.json --out results/bm25_corpus.json -> 각 청크의 텍스트를 BM25 검색용으로 전처리  
-python3 embedding.py results/chunks.json --paper-id 논문이름 --out results/vectors.json -> 임베딩만 다로 다시하고 싶을때  
-python3 embedding.py results/chunks.json --all --out results/vectors.json -> 전체 논문 임베딩 다시 하고싶을때  
-
-python3 vector_search.py --query "묻고싶은 질문" --top-k 5 -> 이 질문을 벡터로 바꿨을 때, 저장된 청크중 어떤 게 유사도가 가장높은지 보여줌.
+python3 chunk_section.py results/논문이름_merged.json --paper-id 논문이름 --out-chunks results/chunks.json --out-sections results/sections_store.json -> 청킹만 따로 다시하고싶을때      
+python3 bm25_index.py results/chunks.json --out results/bm25_corpus.json -> 각 청크의 텍스트를 BM25 검색용으로 전처리      
+python3 embedding.py results/chunks.json --paper-id 논문이름 --out results/vectors.json -> 임베딩만 다로 다시하고 싶을때     
+python3 embedding.py results/chunks.json --all --out results/vectors.json -> 전체 논문 임베딩 다시 하고싶을때      
+python3 vector_search.py --query "묻고싶은 질문" --top-k 5 -> 이 질문을 벡터로 바꿨을 때, 저장된 청크중 어떤 게 유사도가 가장높은지 보여줌.  
 
 ---
 
@@ -63,7 +69,9 @@ vector_search -> bge-m3 + BM25 하이브리드 벡터 유사도 검색, RRF.
    → 표는 마크다운(파이프 기호+숫자) 형태라 자연어 질문과 벡터 유사도가
      낮게 나와서, caption이 정상이어도 검색 순위에서 자주 밀려남
 
-6. 해결 (방향 A): 검색된 청크가 속한 섹션의 table/figure를
+6. 해결 : 검색된 청크가 속한 섹션의 table/figure를
    검색 순위와 무관하게 무조건 프롬프트에 포함하도록 수정
    
    추후 해결 과제: 관련없는 table/figure들이 답변에 질을 낮출수있음. 그리고 많은 양의 데이터를 LLM이 읽기때문에 토큰 사용량 증가 
+
+7. 이미지 파싱하면서 깨달은 건데 우선 docling 안에 라이브러리 같은곳에 자체적으로 table/figure/caption 등을 자동으로 구별해서 저장해주는 기능이 있었음. 그래서 1차적으로 이 로직으로 변경. 긜고 캡션이랑 그림, 테이블 등을 자동으로 연결해주는 기능도 있어서 이걸 사용 -> 근데 여기서 자동으로 캡션 매칭이 안되는 문제점이 생겨서 매칭이 안된 캡션과 그림, 테이블 등을 나중에 연결해주는 fallback 기능 추가.
