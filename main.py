@@ -101,7 +101,7 @@ def run_pipeline(pdf_path: str, paper_id: str, server: str,
     print("\n" + "=" * 70)
     print(f"[2/5] Docling 파싱 중... ({pdf_path})")
     print("=" * 70)
-    docling_out = parse_docling(pdf_path)
+    docling_out = parse_docling(pdf_path, paper_id=paper_id)  # 변경: paper_id 추가 (results/images/{paper_id}/에 그림 저장하기 위해 필요)
 
     docling_out_path = os.path.join(results_dir, f"{pdf_filename}_docling.json")
     with open(docling_out_path, "w", encoding="utf-8") as f:
