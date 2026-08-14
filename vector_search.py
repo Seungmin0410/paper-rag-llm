@@ -195,6 +195,21 @@ def format_tables_and_figures(tables: list[dict], figures: list[dict]) -> str:
 
 
 '''
+추가: 그림 리스트에서 실제 이미지 파일 경로만 뽑아온다.
+parse_docling.py가 캡션 있는 그림에 한해 image_path를 채워뒀으므로,
+그 필드가 있는 것만 모으면 됨 (캡션 없어서 애초에 저장 안 된 그림은 자연히 빠짐).
+이 리스트가 최종적으로 rag_llm.py에서 Claude Vision API에 첨부할 이미지가 된다.
+'''
+def collect_image_paths(figures: list[dict]) -> list[str]:
+    paths = []
+    for fig in figures:
+        path = fig.get("image_path")
+        if path:
+            paths.append(path)
+    return paths
+
+
+'''
 args -> 프로그램 시작할때 사용자가 입력한 옵션값들을 담아놓는 보관함
 '''
 def main():
