@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import argparse
 import sys
@@ -132,12 +134,21 @@ def build_image_block(image_path: str) -> dict | None:
 자동 모드에서만 사용: Claude API 호출.
 (수동 모드에서는 이 함수 자체가 호출되지 않음 -> API 키 없어도 수동 모드는 그냥 작동함)
 
+클로드 모델을 바꾸고 싶으면 -> model: str = "모델명" 이 부분을 바꾸면된다. 
+
+2026 8월 18일 기준 최신 모델이름들:
+Haiku : claude-haiku-4-5-20251001
+Sonnet : claude-sonnet-5
+Opus : 	claude-opus-4-8 
+
+사용자에 의도에 맞게 모델 설정해서 사용
+
 변경: image_paths를 받아서, 텍스트 프롬프트와 함께 이미지도 같이 실어 보냄.
       Anthropic 권장대로 이미지 블록을 텍스트보다 앞에 배치.
       이 순서는 build_prompt()의 image_manifest 순서와 반드시 동일해야 함
       (main()에서 같은 리스트를 기반으로 만들기 때문에 자동으로 일치함).
 '''
-def call_claude_api(prompt: str, image_paths: list[str] = None, model: str = "claude-sonnet-4-6") -> str:
+def call_claude_api(prompt: str, image_paths: list[str] = None, model: str = "claude-haiku-4-5-20251001") -> str:
     try:
         import anthropic #type: ignore
     except ImportError:
