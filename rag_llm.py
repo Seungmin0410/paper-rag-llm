@@ -79,9 +79,17 @@ def build_prompt(query: str, sections: list[dict], image_manifest: list[dict] = 
             + "\n\n"
         )
         image_instruction = (
-            "\n첨부된 이미지가 있다면, 캡션 텍스트만으로는 알 수 없는 시각적 세부사항"
-            "(색상, 개수, 배치, 정확한 수치 라벨, 화살표 방향 등)을 답할 때는 "
-            "해당 이미지를 직접 참고해서 답변해줘. 이때 몇 번째 이미지를 근거로 했는지도 같이 밝혀줘."
+            "\n\n[이미지 판독 규칙 - 반드시 지킬 것]\n"
+            "1) 시각적 세부사항(색상, 화살표 방향, 곡선의 기울기와 방향, 축의 좌우/상하 배치, "
+            "그림 안에 인쇄된 수치 라벨, 개수, 줄무늬/패턴 등)을 묻는 질문에는, "
+            "반드시 첨부된 이미지에서 네 눈으로 직접 확인한 것만 근거로 답해라.\n"
+            "2) 본문 텍스트나 캡션의 서술을 바탕으로 '그림이 이렇게 그려져 있을 것이다'라고 "
+            "추정해서 서술하는 것은 금지한다. 본문 문장을 그림 묘사인 것처럼 재구성하지 마라.\n"
+            "3) 본문 텍스트의 서술과 이미지에서 실제로 보이는 것이 다르면, "
+            "이미지에서 관찰한 쪽을 우선하고, 둘이 어긋난다는 사실도 함께 밝혀라.\n"
+            "4) 이미지가 흐리거나 해당 부분이 잘려서 확인이 불가능하면, "
+            "추측해서 서술하지 말고 '이미지에서 확인 불가'라고 명시해라.\n"
+            "5) 이미지를 근거로 답할 때는 논문(paper_id)과 몇 번째 이미지인지 반드시 밝혀라."
         )
 
     '''
@@ -91,7 +99,11 @@ def build_prompt(query: str, sections: list[dict], image_manifest: list[dict] = 
     '''
 
     
-    prompt = f"""{image_manifest_text}다음은 논문에서 검색된 관련 내용입니다.
+    image_block = ""
+    if image_manifest:
+        image_block = f"\n\n{image_manifest_text}{image_instruction}"
+
+    prompt = f"""다음은 논문에서 검색된 관련 내용입니다.
 
 {context_text}
 
@@ -100,7 +112,7 @@ def build_prompt(query: str, sections: list[dict], image_manifest: list[dict] = 
 위 내용을 바탕으로 다음 질문에 답변해줘.
 만약 위 내용만으로 답하기에 정보가 부족하면, 부족한 부분이 무엇인지 솔직히 말해줘.
 답변할 때 어느 논문(paper_id)의 어느 섹션을 근거로 했는지도 같이 밝혀줘.
-추측하지 말고, 자료에 명시적으로 없는 내용은 답변에 포함하지 마.{image_instruction}
+추측하지 말고, 자료에 명시적으로 없는 내용은 답변에 포함하지 마.{image_block}
 
 질문: {query}
 """
@@ -148,7 +160,7 @@ Opus : 	claude-opus-4-8
       이 순서는 build_prompt()의 image_manifest 순서와 반드시 동일해야 함
       (main()에서 같은 리스트를 기반으로 만들기 때문에 자동으로 일치함).
 '''
-def call_claude_api(prompt: str, image_paths: list[str] = None, model: str = "claude-haiku-4-5-20251001") -> str:
+def call_claude_api(prompt: str, image_paths: list[str] = None, model: str = "claude-sonnet-5") -> str:
     try:
         import anthropic #type: ignore
     except ImportError:
@@ -169,10 +181,12 @@ def call_claude_api(prompt: str, image_paths: list[str] = None, model: str = "cl
     client = anthropic.Anthropic()  # 환경변수 ANTHROPIC_API_KEY 사용
     response = client.messages.create(
         model=model,
-        max_tokens=1024,
+        max_tokens=4096,
         messages=[{"role": "user", "content": content}],
     )
-    return response.content[0].text
+    text_parts = [block.text for block in response.content if block.type == "text"]
+    return "\n".join(text_parts)
+    
 
 
 '''
