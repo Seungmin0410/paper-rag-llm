@@ -28,6 +28,13 @@ from vector_search import (
 # Haiku : claude-haiku-4-5-20251001 / Sonnet : claude-sonnet-5 / Opus : claude-opus-4-8
 MODEL = "claude-sonnet-5"
 
+
+'''
+우선은 파일명 수동을 쳐야하지만 나중에 --"파일이름" 이런식으로 바꿔도 되고 이건 한번 생각해봐야할 문제
+'''
+BACKGROUND_PATH = "background.txt"
+NOTES_PATH = "notes.txt"
+
 # vector_search.py의 load_model()이 SentenceTransformer를 매번 새로 로딩하면 느림
 # -> 여기서 한 번만 로딩해서 재사용 (모듈 레벨 캐싱)
 _embedding_model = None
@@ -39,9 +46,8 @@ def get_embedding_model():
 
 
 '''
-rag_llm.py의 call_claude_api()와 동일한 패턴.
-client를 함수 호출마다 새로 만듦 (rag_llm.py 방식 그대로 따름).
-ThinkingBlock이 먼저 올 수 있어서 type == "text"인 블록만 골라 이어붙임 (rag_llm.py에서 겪은 버그 그대로 반영).
+클로드 API 호출
+ThinkingBlock이 먼저 올 수 있어서 type == "text"인 블록만 골라 이어붙임 -> LLM이 반환할때 바로 text가 안오는 경우 대비. 
 '''
 def call_claude(prompt: str, model: str = MODEL, max_tokens: int = 4096) -> str:
     try:
@@ -60,19 +66,38 @@ def call_claude(prompt: str, model: str = MODEL, max_tokens: int = 4096) -> str:
     text_parts = [block.text for block in response.content if block.type == "text"]
     return "\n".join(text_parts)
 
+'''
+전체 파이프라인 시작
 
-# ---------------------------------------------------------------------------
-# 1단: 노하우 파일 로드
-# ---------------------------------------------------------------------------
-def load_project_notes(notes_path: str) -> str:
-    # TODO: 파일 없을 때 에러 메시지 어떻게 보여줄지
-    with open(notes_path, "r", encoding="utf-8") as f:
-        return f.read()
+1단계: 우리가 가지고 있는 배경설명 파일 + 노하우 파일 로드 -> LLM에 전달
+배경설명은 필수(비어있거나 파일이 없으면 종료) / 노하우는 선택(첫 실험 전엔 없어도 진행)
+'''
+def load_project_context(background_path: str = BACKGROUND_PATH, notes_path: str = NOTES_PATH) -> str:
+    if not os.path.exists(background_path):
+        print(f"!! 배경설명 파일을 찾을 수 없습니다: {background_path}")
+        sys.exit(1)
+
+    with open(background_path, "r", encoding="utf-8") as f:
+        background = f.read()
+
+    if not background.strip():
+        print(f"!! 배경설명 파일이 비어 있습니다: {background_path}")
+        sys.exit(1)
+
+    notes = ""
+    if notes_path and os.path.exists(notes_path):
+        with open(notes_path, "r", encoding="utf-8") as f:
+            notes = f.read()
+    if not notes.strip():
+        print("(참고: 아직 기록된 실험 노하우가 없습니다. 배경설명만으로 진행합니다.)")
+        notes = "(아직 기록된 실험 노하우 없음)"
+
+    return f"[프로젝트 배경]\n{background}\n\n[실험 노하우]\n{notes}"
 
 
-# ---------------------------------------------------------------------------
-# 중간 단계: 노하우 보고 검색 쿼리 생성
-# ---------------------------------------------------------------------------
+'''
+중간 단계: 배경설명 + 노하우 + 질문 -> LLM에 전달하고 이에 맞는 쿼리 뽑기
+'''
 def generate_search_query(project_notes: str, user_question: str) -> str:
     # TODO: 쿼리 하나만 뽑을지, 여러 개 뽑을지 (지금은 하나로 시작)
     prompt = f"""아래는 우리 프로젝트의 배경 지식과 노하우입니다.
@@ -87,10 +112,9 @@ def generate_search_query(project_notes: str, user_question: str) -> str:
     return call_claude(prompt, max_tokens=200).strip()
 
 
-# ---------------------------------------------------------------------------
-# 2단: 논문 DB 검색 (벡터+BM25 하이브리드) - PPT/타 프로젝트 노하우 제외
-# vector_search.py의 main() 로직을 함수 하나로 재사용
-# ---------------------------------------------------------------------------
+'''
+2단계: 데이터 베이스에서 추론에 도움될만한 내용들을 가져옴
+'''
 def hybrid_search_papers(
     query: str,
     chunks_path: str = "results/chunks.json",
@@ -123,10 +147,9 @@ def hybrid_search_papers(
     return sections_for_llm
 
 
-# ---------------------------------------------------------------------------
-# 검색된 섹션들을 최종 프롬프트에 넣을 텍스트로 변환
-# 출처 태그 규칙: [논문DB: paper_id] 형식으로 각 섹션 앞에 표시
-# ---------------------------------------------------------------------------
+'''
+검색된 섹션들을 최종 프롬프트에 넣을 텍스트로 변환
+'''
 def format_paper_sections_for_prompt(sections_for_llm: list) -> str:
     blocks = []
     for s in sections_for_llm:
@@ -139,14 +162,11 @@ def format_paper_sections_for_prompt(sections_for_llm: list) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
-# ---------------------------------------------------------------------------
-# 충분성 판단
-# ---------------------------------------------------------------------------
+'''
+데이터 베이스에서 가져온 정보들이 충분한지 판단
+-> 아직은 LLM 자체 판단에 맞기지만 차후 특정 유사도 이하면 트리거 하거나 다른 방법을 생각
+'''
 def is_sufficient(search_results: list, user_question: str) -> bool:
-    # search_top_k / search_bm25_top_k는 항상 top_k개를 채워서 반환하므로
-    # "0건"은 사실상 발생하지 않음 -> 진짜 판단은 전적으로 LLM 몫
-    # (유사도가 낮아 무관한 청크가 섞여도 top_k만큼은 채워져서 나오기 때문에,
-    #  "충분한가"뿐 아니라 "애초에 질문과 관련이 있는가"부터 판단하게 프롬프트에 명시)
     if len(search_results) == 0:
         return False
 
@@ -167,9 +187,9 @@ def is_sufficient(search_results: list, user_question: str) -> bool:
     return answer.startswith("예")
 
 
-# ---------------------------------------------------------------------------
-# 웹서치 폴백
-# ---------------------------------------------------------------------------
+'''
+내용이 부족할시 웹서치
+'''
 def web_search_fallback(user_question: str, model: str = MODEL, max_tokens: int = 2048) -> str:
     try:
         import anthropic  # type: ignore
@@ -191,16 +211,16 @@ def web_search_fallback(user_question: str, model: str = MODEL, max_tokens: int 
     return "\n".join(text_parts)
 
 
-# ---------------------------------------------------------------------------
-# 최종 추론 생성
-# ---------------------------------------------------------------------------
+'''
+최종 추론 형성
+'''
 def generate_final_answer(project_notes: str, paper_results: list, web_results: str, user_question: str) -> str:
     # 출처 태그 규칙: 논문DB는 [논문DB: paper_id], 웹서치는 [웹서치], 노하우는 태그 없음
 
     paper_section = format_paper_sections_for_prompt(paper_results) if paper_results else "(없음)"
     web_section = web_results if web_results else "(없음)"
 
-    # TODO: 출처 태그 규칙을 규칙 문장으로 명시 (트랙 A 이미지 판독 규칙처럼)
+    # TODO: 출처 태그 규칙을 규칙 문장으로 명시 
     instructions = """
 답변 작성 규칙:
 - 논문 데이터베이스에서 가져온 내용은 [논문DB: paper_id] 형식으로 짧게 표시
@@ -221,15 +241,16 @@ def generate_final_answer(project_notes: str, paper_results: list, web_results: 
 
 질문: {user_question}"""
 
-    return call_claude(prompt, max_tokens=4096)  # thinking 고려해서 rag_llm.py와 동일하게
+    return call_claude(prompt, max_tokens=4096)  
 
 
 # ---------------------------------------------------------------------------
 # 전체 파이프라인 (1홉)
 # ---------------------------------------------------------------------------
 def run_reasoning(
-    notes_path: str,
     user_question: str,
+    background_path: str = BACKGROUND_PATH,
+    notes_path: str = NOTES_PATH,
     chunks_path: str = "results/chunks.json",
     vectors_path: str = "results/vectors.json",
     sections_path: str = "results/sections_store.json",
@@ -237,7 +258,7 @@ def run_reasoning(
     top_k: int = 3,
     candidate_k: int = 15,
 ) -> str:
-    project_notes = load_project_notes(notes_path)
+    project_notes = load_project_context(background_path, notes_path)
 
     query = generate_search_query(project_notes, user_question)
     paper_results = hybrid_search_papers(
@@ -265,9 +286,11 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--notes", required=True, help="프로젝트 노하우 파일 경로")
     parser.add_argument("--query", required=True, help="질문")
-    # 아래 경로 인자들은 vector_search.py 기본값과 동일하게 맞춤
+    # 배경설명/노하우는 기본적으로 BACKGROUND_PATH/NOTES_PATH 고정 파일을 읽음.
+    # 다른 파일로 테스트하고 싶을 때만 아래 두 인자로 덮어쓰면 됨
+    parser.add_argument("--background", default=BACKGROUND_PATH, help=f"배경설명 파일 경로 (기본값: {BACKGROUND_PATH})")
+    parser.add_argument("--notes", default=NOTES_PATH, help=f"노하우 파일 경로 (기본값: {NOTES_PATH})")
     parser.add_argument("--chunks", default="results/chunks.json")
     parser.add_argument("--vectors", default="results/vectors.json")
     parser.add_argument("--sections", default="results/sections_store.json")
@@ -277,8 +300,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     result = run_reasoning(
-        args.notes,
         args.query,
+        background_path=args.background,
+        notes_path=args.notes,
         chunks_path=args.chunks,
         vectors_path=args.vectors,
         sections_path=args.sections,
