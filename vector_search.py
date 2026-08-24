@@ -80,18 +80,18 @@ def search_bm25_top_k(query: str, bm25_entries: list[dict], top_k: int = 3) -> l
 
 
 '''
-RRF(Reciprocal Rank Funsion) -> 벡터 검색 순위 리스트와 BM25 순위 리스트를 합침, 점수를 산정하는 방식이 벡터 유사도와 BM25 점수가 다르기 때문에 순위르 기반으로 산정 
+RRF(Reciprocal Rank Funsion) -> 여러 개의 순위 리스트(벡터 검색, BM25 검색, 쿼리별로 각각 등)를 합침,
+점수를 산정하는 방식이 벡터 유사도와 BM25 점수가 다르기 때문에 순위를 기반으로 산정.
+*rank_lists로 받기 때문에 예전처럼 reciprocal_rank_fusion(vector_results, bm25_results, k=60)로
+2개만 넘겨도 그대로 동작하고, 쿼리가 여러 개라 순위 리스트가 더 많아져도 그대로 넘기면 됨.
 '''
-def reciprocal_rank_fusion(vector_results: list[dict], bm25_results: list[dict], k: int = 60) -> list[dict]:
+def reciprocal_rank_fusion(*rank_lists: list[dict], k: int = 60) -> list[dict]:
     rrf_scores = {}   ## key: (paper_id, section_id, chunk_index) -> 누적 RRF 점수
 
-    for rank, item in enumerate(vector_results):
-        key = (item["paper_id"], item["section_id"], item["chunk_index"])
-        rrf_scores[key] = rrf_scores.get(key, 0) + 1 / (k + rank + 1)
-
-    for rank, item in enumerate(bm25_results):
-        key = (item["paper_id"], item["section_id"], item["chunk_index"])
-        rrf_scores[key] = rrf_scores.get(key, 0) + 1 / (k + rank + 1)
+    for rank_list in rank_lists:
+        for rank, item in enumerate(rank_list):
+            key = (item["paper_id"], item["section_id"], item["chunk_index"])
+            rrf_scores[key] = rrf_scores.get(key, 0) + 1 / (k + rank + 1)
 
     fused = []
     for (paper_id, section_id, chunk_index), score in rrf_scores.items():
