@@ -24,6 +24,9 @@ PDF 파일 하나를 넣으면:
 
     # 임베딩까지 말고 청킹까지만 하고 싶으면
     python3 main.py papers/2023_From.pdf --skip-embedding
+
+    # 이미 등록된 논문(파일 해시 또는 DOI 일치)이어도 강제로 추가하고 싶으면
+    python3 main.py papers/2023_From.pdf --force
 '''
 
 
@@ -37,6 +40,15 @@ from parse_docling import parse_docling
 from chunk_section import build_chunks, upsert_chunks_store, upsert_sections_store
 from embedding import load_model, embed_chunks, upsert_vectors_store
 from bm25_index import build_bm25_entries, upsert_bm25_store
+from paper_registry import (
+    DuplicatePaperError,
+    compute_file_hash,
+    load_registry,
+    save_registry,
+    find_by_file_hash,
+    find_by_doi,
+    register_paper,
+)
 
 '''
 paper_id를 --paper-id 없이 넣었을 때, PDF 파일명에서 자동으로 만들어주는 함수
@@ -77,17 +89,50 @@ def merge_results(grobid_doc: dict, docling_out: dict) -> dict:
 def run_pipeline(pdf_path: str, paper_id: str, server: str,
                   results_dir: str = "results",
                   target_size: int = 700, overlap: int = 80,
-                  batch_size: int = 16, skip_embedding: bool = False):
+                  batch_size: int = 16, skip_embedding: bool = False,
+                  force: bool = False):
 
     os.makedirs(results_dir, exist_ok=True)
     pdf_filename = os.path.splitext(os.path.basename(pdf_path))[0]
 
-    # === 1) Grobid ===
+    registry_path = os.path.join(results_dir, "paper_registry.json")
+    registry = load_registry(registry_path)
+
+    # === 0) 중복 체크 1차: 파일 해시 ===
+    # 완전히 같은 PDF를 다른 이름으로 다시 넣는 흔한 실수를 Grobid/Docling 돌리기 전에 빠르게 걸러냄
     print("=" * 70)
+    print(f"[0/5] 중복 논문 체크 중... (파일 해시)")
+    print("=" * 70)
+    file_hash = compute_file_hash(pdf_path)
+    existing_by_hash = find_by_file_hash(registry, file_hash)
+    if existing_by_hash and not force:
+        raise DuplicatePaperError(
+            f"이미 등록된 논문과 완전히 동일한 파일입니다 (기존 paper_id: '{existing_by_hash}'). "
+            f"그래도 추가하려면 --force 옵션을 사용하세요.",
+            existing_paper_id=existing_by_hash,
+            match_type="file_hash",
+        )
+    print("  중복 아님 (새 파일)")
+
+    # === 1) Grobid ===
+    print("\n" + "=" * 70)
     print(f"[1/5] Grobid 파싱 중... ({pdf_path})")
     print("=" * 70)
     tei_bytes = call_grobid(pdf_path, server)
     grobid_doc = parse_tei(tei_bytes)
+
+    # === 중복 체크 2차: DOI ===
+    # 파일명/판본이 달라 해시로는 못 잡아도, Grobid가 뽑은 DOI가 같으면 같은 논문으로 판단
+    doi = grobid_doc.get("doi", "")
+    existing_by_doi = find_by_doi(registry, doi)
+    if existing_by_doi and not force:
+        raise DuplicatePaperError(
+            f"DOI가 이미 등록된 논문과 같습니다 (DOI: {doi}, 기존 paper_id: '{existing_by_doi}'). "
+            f"파일명이나 판본이 다를 뿐 같은 논문으로 보입니다. "
+            f"그래도 추가하려면 --force 옵션을 사용하세요.",
+            existing_paper_id=existing_by_doi,
+            match_type="doi",
+        )
 
     grobid_out_path = os.path.join(results_dir, f"{pdf_filename}_grobid.json")
     with open(grobid_out_path, "w", encoding="utf-8") as f:
@@ -152,6 +197,11 @@ def run_pipeline(pdf_path: str, paper_id: str, server: str,
     print(f"  이번 논문 BM25 엔트리: {len(bm25_entries)}개")
     print(f"  누적 저장됨 (BM25): {bm25_path} (전체 {len(all_bm25)}개)")
 
+    # 여기까지 왔으면 메타데이터 파싱+청킹은 끝난 상태 -> 중복 체크용 레지스트리에 등록
+    # (임베딩 완료 여부와 무관하게, 이후 같은 논문이 다시 들어오는 걸 잡아내는 게 목적)
+    register_paper(registry, paper_id, file_hash=file_hash, doi=doi, source_filename=os.path.basename(pdf_path))
+    save_registry(registry, registry_path)
+
     # === 5) 임베딩 ===
     if skip_embedding:
         print("\n[5/5] --skip-embedding 지정됨 → 임베딩 건너뜀")
@@ -188,6 +238,8 @@ def main():
     ap.add_argument("--overlap", type=int, default=80, help="청크 오버랩 크기")
     ap.add_argument("--batch-size", type=int, default=16, help="임베딩 배치 크기")
     ap.add_argument("--skip-embedding", action="store_true", help="임베딩 단계 건너뛰기")
+    ap.add_argument("--force", action="store_true",
+                     help="이미 등록된 논문(파일 해시 또는 DOI 일치)이어도 강제로 추가")
     args = ap.parse_args()
 
     # --paper-id 안 줬으면 파일명에서 자동 생성
@@ -205,6 +257,7 @@ def main():
             overlap=args.overlap,
             batch_size=args.batch_size,
             skip_embedding=args.skip_embedding,
+            force=args.force,
         )
     except Exception as e:
         print(f"\n❌ 파이프라인 중단: {e}")
