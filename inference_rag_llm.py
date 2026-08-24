@@ -2,12 +2,12 @@
 inference_rag_llm.py — 추론 최적화 파이프라인
 
 구조:
-[1단] 노하우+배경설명 파일 통째로 주입 
-[중간] LLM이 쿼리 생성
-[2단] 논문 DB만 검색 (벡터+BM25 하이브리드, 아직은 PPT/다른 프로젝트 노하우는 제외)
-[충분성 판단] 0건이면 LLM 호출 없이 바로 '부족' / 있으면 LLM이 판단
+[1단] 노하우+배경설명 파일 통째로 주입
+[중간] LLM이 서로 다른 관점의 검색 쿼리 여러 개 생성 (가벼운 모델)
+[2단] 논문 DB만 검색 (쿼리별로 벡터+BM25 하이브리드 후 전체 RRF로 병합, 아직은 PPT/다른 프로젝트 노하우는 제외)
+[충분성 판단] 0건이면 LLM 호출 없이 바로 '부족' / 있으면 LLM이 판단 (가벼운 모델)
 부족하면 웹서치 폴백
-[최종] 노하우(태그없음) + 논문DB(paper_id 태그) + 웹서치(태그만) + 질문 -> 최종 추론
+[최종] 노하우(태그없음) + 논문DB(paper_id 태그, 관련 이미지 첨부) + 웹서치(태그만) + 질문 -> 최종 추론
 """
 
 import os
@@ -24,9 +24,11 @@ from vector_search import (
     dedupe_sections,
     format_tables_and_figures,
 )
+from rag_llm import build_image_manifest, build_image_block
 
 # Haiku : claude-haiku-4-5-20251001 / Sonnet : claude-sonnet-5 / Opus : claude-opus-4-8
-MODEL = "claude-sonnet-5"
+MODEL = "claude-sonnet-5"                  # 최종 추론·웹서치 종합용 (품질이 중요한 단계)
+FAST_MODEL = "claude-haiku-4-5-20251001"   # 쿼리 생성·충분성 판단용 (단순 분류/생성이라 가벼운 모델로 충분)
 
 
 '''
@@ -66,6 +68,37 @@ def call_claude(prompt: str, model: str = MODEL, max_tokens: int = 4096) -> str:
     text_parts = [block.text for block in response.content if block.type == "text"]
     return "\n".join(text_parts)
 
+
+'''
+call_claude()랑 거의 동일하지만, 그림(이미지)을 같이 첨부해야 할 때 씀.
+content가 순수 문자열이 아니라 [이미지 블록들 + 텍스트 블록] 리스트로 감
+(Anthropic 권장대로 이미지를 텍스트보다 앞에 배치 - rag_llm.py의 call_claude_api()와 동일한 방식).
+'''
+def call_claude_with_images(prompt: str, image_paths: list = None, model: str = MODEL, max_tokens: int = 4096) -> str:
+    try:
+        import anthropic  # type: ignore
+    except ImportError:
+        print("anthropic 패키지가 설치되어 있지 않습니다.")
+        print("설치: pip install anthropic --break-system-packages")
+        sys.exit(1)
+
+    content = []
+    for path in (image_paths or []):
+        block = build_image_block(path)
+        if block:
+            content.append(block)
+    content.append({"type": "text", "text": prompt})
+
+    client = anthropic.Anthropic()
+    response = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": content}],
+    )
+    text_parts = [block.text for block in response.content if block.type == "text"]
+    return "\n".join(text_parts)
+
+
 '''
 전체 파이프라인 시작
 
@@ -98,8 +131,7 @@ def load_project_context(background_path: str = BACKGROUND_PATH, notes_path: str
 '''
 중간 단계: 배경설명 + 노하우 + 질문 -> LLM에 전달하고 이에 맞는 쿼리 뽑기
 '''
-def generate_search_query(project_notes: str, user_question: str) -> str:
-    # TODO: 쿼리 하나만 뽑을지, 여러 개 뽑을지 (지금은 하나로 시작)
+def generate_search_query(project_notes: str, user_question: str, n: int = 2) -> list:
     prompt = f"""아래는 우리 프로젝트의 배경 지식과 노하우입니다.
 
 {project_notes}
@@ -107,23 +139,30 @@ def generate_search_query(project_notes: str, user_question: str) -> str:
 사용자 질문: {user_question}
 
 이 질문에 답하려면 논문 데이터베이스에서 어떤 정보를 검색해야 할지,
-검색에 사용할 쿼리 문장 1개만 만들어주세요. 쿼리만 출력하고 다른 말은 하지 마세요."""
+서로 다른 관점의 검색 쿼리 {n}개를 만들어주세요.
+한 줄에 쿼리 문장 하나씩만 출력하고, 번호나 다른 말은 절대 붙이지 마세요."""
 
-    return call_claude(prompt, max_tokens=200).strip()
+    raw = call_claude(prompt, model=FAST_MODEL, max_tokens=200).strip()
+    queries = [line.strip("-*0123456789.) ").strip() for line in raw.splitlines() if line.strip()]
+    return queries[:n] if queries else [user_question]
 
 
 '''
 2단계: 데이터 베이스에서 추론에 도움될만한 내용들을 가져옴
 '''
 def hybrid_search_papers(
-    query: str,
+    queries,
     chunks_path: str = "results/chunks.json",
     vectors_path: str = "results/vectors.json",
     sections_path: str = "results/sections_store.json",
     bm25_path: str = "results/bm25_corpus.json",
-    top_k: int = 3,
+    top_k: int = 5,
     candidate_k: int = 15,
 ) -> list:
+    # 쿼리를 문자열 하나로 줘도, 리스트로 여러 개 줘도 둘 다 동작하게
+    if isinstance(queries, str):
+        queries = [queries]
+
     with open(chunks_path, "r", encoding="utf-8") as f:
         chunks = json.load(f)
     with open(vectors_path, "r", encoding="utf-8") as f:
@@ -134,11 +173,16 @@ def hybrid_search_papers(
         bm25_entries = json.load(f)
 
     model = get_embedding_model()
-    query_vector = model.encode([query], normalize_embeddings=True)[0].tolist()
 
-    vector_results = search_top_k(query_vector, vectors, top_k=candidate_k)
-    bm25_results = search_bm25_top_k(query, bm25_entries, top_k=candidate_k)
-    fused = reciprocal_rank_fusion(vector_results, bm25_results, k=60)
+    # 쿼리마다 벡터/BM25 순위 리스트를 따로 뽑고, 전부 한 번에 RRF로 병합
+    # (쿼리 1개짜리 호출과 동일하게 동작하면서, 여러 관점의 쿼리도 자연스럽게 합쳐짐)
+    rank_lists = []
+    for q in queries:
+        query_vector = model.encode([q], normalize_embeddings=True)[0].tolist()
+        rank_lists.append(search_top_k(query_vector, vectors, top_k=candidate_k))
+        rank_lists.append(search_bm25_top_k(q, bm25_entries, top_k=candidate_k))
+
+    fused = reciprocal_rank_fusion(*rank_lists, k=60)
     final_results = fused[:top_k]
 
     chunk_lookup = build_chunk_lookup(chunks)
@@ -172,18 +216,19 @@ def is_sufficient(search_results: list, user_question: str) -> bool:
 
     results_text = format_paper_sections_for_prompt(search_results)
 
-    prompt = f"""사용자 질문: {user_question}
-
-검색된 자료:
+    # 프롬프트 순서 원칙(generate_final_answer와 동일): 긴 문서 먼저, 규칙은 질문 바로 앞, 질문은 맨 마지막
+    prompt = f"""검색된 자료:
 {results_text}
 
-먼저 위 자료가 질문과 실제로 관련이 있는지 판단하세요.
+먼저 위 자료가 아래 질문과 실제로 관련이 있는지 판단하세요.
 관련이 없다면 무조건 "아니오"로 답하세요.
 관련이 있다면, 그 내용만으로 질문에 충분히 답할 수 있는지 판단하세요.
 
-"예" 또는 "아니오"로만 답하세요."""
+"예" 또는 "아니오"로만 답하세요.
 
-    answer = call_claude(prompt, max_tokens=10).strip()
+질문: {user_question}"""
+
+    answer = call_claude(prompt, model=FAST_MODEL, max_tokens=10).strip()
     return answer.startswith("예")
 
 
@@ -220,13 +265,40 @@ def generate_final_answer(project_notes: str, paper_results: list, web_results: 
     paper_section = format_paper_sections_for_prompt(paper_results) if paper_results else "(없음)"
     web_section = web_results if web_results else "(없음)"
 
-    # TODO: 출처 태그 규칙을 규칙 문장으로 명시 
+    # TODO: 출처 태그 규칙을 규칙 문장으로 명시
     instructions = """
 답변 작성 규칙:
 - 논문 데이터베이스에서 가져온 내용은 [논문DB: paper_id] 형식으로 짧게 표시
 - 웹서치에서 가져온 내용은 [웹서치] 로만 표시
 - 프로젝트 노하우 자체 내용은 출처 표시 없이 자연스럽게 서술
 """
+
+    # paper_results에 딸린 그림(figure)들 중 실제 이미지 파일이 있는 것만 모아서
+    # Claude에게 같이 첨부함 (rag_llm.py에 이미 있던 이미지 판독 로직을 그대로 재사용).
+    # 캡션 없는 장식용 그림은 build_image_manifest 안에서 이미 걸러짐.
+    image_manifest = build_image_manifest(paper_results) if paper_results else []
+    image_paths = [m["image_path"] for m in image_manifest]
+
+    if image_manifest:
+        manifest_lines = []
+        for i, m in enumerate(image_manifest, start=1):
+            caption_short = (m["caption"] or "")[:120]
+            manifest_lines.append(f"{i}. [{m['paper_id']}] {m['section_head']} — {caption_short}")
+
+        instructions += (
+            "\n이 메시지에는 아래 순서대로 관련 논문의 그림(Figure) 이미지가 첨부되어 있습니다:\n"
+            + "\n".join(manifest_lines)
+            + "\n\n[이미지 판독 규칙 - 반드시 지킬 것]\n"
+            "1) 시각적 세부사항(색상, 화살표 방향, 곡선의 기울기와 방향, 축의 좌우/상하 배치, "
+            "그림 안에 인쇄된 수치 라벨, 개수, 줄무늬/패턴 등)을 묻는 질문에는, "
+            "반드시 첨부된 이미지에서 직접 확인한 것만 근거로 답해라.\n"
+            "2) 본문 텍스트나 캡션만 보고 '그림이 이렇게 그려져 있을 것이다'라고 추정해서 서술하는 것은 금지한다.\n"
+            "3) 본문 텍스트의 서술과 이미지에서 실제로 보이는 것이 다르면, "
+            "이미지에서 관찰한 쪽을 우선하고, 둘이 어긋난다는 사실도 함께 밝혀라.\n"
+            "4) 이미지가 흐리거나 해당 부분이 잘려서 확인이 불가능하면, "
+            "추측해서 서술하지 말고 '이미지에서 확인 불가'라고 명시해라.\n"
+            "5) 이미지를 근거로 답할 때는 논문(paper_id)과 몇 번째 이미지인지 반드시 밝혀라.\n"
+        )
 
     # 프롬프트 순서 원칙(트랙 A 세션 결론과 동일): 긴 문서 먼저, 규칙은 질문 바로 앞, 질문은 맨 마지막
     prompt = f"""{project_notes}
@@ -241,7 +313,9 @@ def generate_final_answer(project_notes: str, paper_results: list, web_results: 
 
 질문: {user_question}"""
 
-    return call_claude(prompt, max_tokens=4096)  
+    if image_paths:
+        return call_claude_with_images(prompt, image_paths=image_paths, max_tokens=4096)
+    return call_claude(prompt, max_tokens=4096)
 
 
 # ---------------------------------------------------------------------------
@@ -255,14 +329,14 @@ def run_reasoning(
     vectors_path: str = "results/vectors.json",
     sections_path: str = "results/sections_store.json",
     bm25_path: str = "results/bm25_corpus.json",
-    top_k: int = 3,
+    top_k: int = 5,
     candidate_k: int = 15,
 ) -> str:
     project_notes = load_project_context(background_path, notes_path)
 
-    query = generate_search_query(project_notes, user_question)
+    queries = generate_search_query(project_notes, user_question)
     paper_results = hybrid_search_papers(
-        query,
+        queries,
         chunks_path=chunks_path,
         vectors_path=vectors_path,
         sections_path=sections_path,
@@ -298,7 +372,7 @@ if __name__ == "__main__":
     parser.add_argument("--vectors", default="results/vectors.json")
     parser.add_argument("--sections", default="results/sections_store.json")
     parser.add_argument("--bm25", default="results/bm25_corpus.json")
-    parser.add_argument("--top-k", type=int, default=3)
+    parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--candidate-k", type=int, default=15)
     args = parser.parse_args()
 
