@@ -90,7 +90,11 @@ def run_pipeline(pdf_path: str, paper_id: str, server: str,
                   results_dir: str = "results",
                   target_size: int = 700, overlap: int = 80,
                   batch_size: int = 16, skip_embedding: bool = False,
-                  force: bool = False):
+                  force: bool = False, on_progress=None):
+    # on_progress(message): 웹 업로드 화면처럼 단계별 진행상황을 실시간으로 보여주고 싶을 때 쓰는 훅.
+    # CLI에서는 안 넘기면 그냥 아무 일도 안 함 (print()로 충분하니까).
+    if on_progress is None:
+        on_progress = lambda message: None
 
     os.makedirs(results_dir, exist_ok=True)
     pdf_filename = os.path.splitext(os.path.basename(pdf_path))[0]
@@ -113,6 +117,7 @@ def run_pipeline(pdf_path: str, paper_id: str, server: str,
             match_type="file_hash",
         )
     print("  중복 아님 (새 파일)")
+    on_progress("중복 논문 체크 완료 (파일 해시)")
 
     # === 1) Grobid ===
     print("\n" + "=" * 70)
@@ -141,6 +146,7 @@ def run_pipeline(pdf_path: str, paper_id: str, server: str,
     print(f"  섹션(원본): {len(grobid_doc.get('sections', []))}개")
     print(f"  참고문헌: {len(grobid_doc.get('references', []))}건")
     print(f"  저장됨: {grobid_out_path}")
+    on_progress("Grobid 파싱 완료")
 
     # === 2) Docling ===
     print("\n" + "=" * 70)
@@ -153,6 +159,7 @@ def run_pipeline(pdf_path: str, paper_id: str, server: str,
         json.dump(docling_out, f, ensure_ascii=False, indent=2)
     print(f"  정제된 섹션: {len(docling_out.get('sections', []))}개")
     print(f"  저장됨: {docling_out_path}")
+    on_progress("Docling 파싱 완료")
 
     # === 3) 병합 ===
     print("\n" + "=" * 70)
@@ -196,6 +203,7 @@ def run_pipeline(pdf_path: str, paper_id: str, server: str,
     all_bm25 = upsert_bm25_store(bm25_path, paper_id, bm25_entries)
     print(f"  이번 논문 BM25 엔트리: {len(bm25_entries)}개")
     print(f"  누적 저장됨 (BM25): {bm25_path} (전체 {len(all_bm25)}개)")
+    on_progress("청킹 + BM25 인덱스 생성 완료")
 
     # 여기까지 왔으면 메타데이터 파싱+청킹은 끝난 상태 -> 중복 체크용 레지스트리에 등록
     # (임베딩 완료 여부와 무관하게, 이후 같은 논문이 다시 들어오는 걸 잡아내는 게 목적)
@@ -205,6 +213,7 @@ def run_pipeline(pdf_path: str, paper_id: str, server: str,
     # === 5) 임베딩 ===
     if skip_embedding:
         print("\n[5/5] --skip-embedding 지정됨 → 임베딩 건너뜀")
+        on_progress("완료 (임베딩 건너뜀)")
         return
 
     print("\n" + "=" * 70)
@@ -219,10 +228,12 @@ def run_pipeline(pdf_path: str, paper_id: str, server: str,
     dim = len(vectors[0]["embedding"]) if vectors else 0
     print(f"  임베딩 완료: {len(vectors)}개 청크 (벡터 차원: {dim})")
     print(f"  누적 저장됨 (벡터): {vectors_path} (전체 {len(all_vectors)}개)")
+    on_progress("임베딩 완료")
 
     print("\n" + "=" * 70)
     print(f"✅ 전체 파이프라인 완료! (paper_id: {paper_id})")
     print("=" * 70)
+    on_progress("완료")
 
 
 def main():
