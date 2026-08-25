@@ -31,6 +31,41 @@
 
 ---
 
+**웹 챗 UI**
+
+내부 연구원들이 터미널 없이 브라우저에서 편하게 질문할 수 있는 간단한 채팅 화면 (`app.py` + `templates/` + `static/`).
+
+```
+pip3 install -r requirements_webapp.txt   # flask (최초 1회)
+export ANTHROPIC_API_KEY="sk-..."          # 아직 설정 안 했다면
+python3 app.py                             # http://localhost:5050 접속
+```
+
+- 처음 실행하면 `background.txt`가 없을 경우 빈 템플릿을 자동 생성함 → 우리 프로젝트 배경/노하우로 채워 넣으면 챗봇이 답변할 때 참고함.
+- `results/`에 저장된 청크·벡터·BM25 인덱스를 그대로 사용하므로, 새 논문을 추가했다면 `main.py`로 먼저 파이프라인을 돌린 뒤 웹 UI를 써야 최신 데이터가 반영됨.
+- 개발용 서버(Flask dev server)이므로 사내망 안에서만 띄우고, 외부에 노출하지 않도록 주의.
+
+---
+
+**중복 논문 감지**
+
+같은 논문이 다른 파일명(다른 판본 등)으로 두 번 들어오는 걸 막기 위해 `main.py`가 논문을 추가하기 전에 자동으로 체크함 (`paper_registry.py`, `results/paper_registry.json`에 기록).
+
+1. **파일 해시 체크** — 완전히 동일한 PDF 재업로드를 Grobid 돌리기 전에 걸러냄 (제일 흔한 실수, 빠르게 체크)
+2. **DOI 체크** — Grobid가 메타데이터를 뽑은 직후, 파일명·판본이 달라도 DOI가 같으면 같은 논문으로 판단해서 막음
+
+둘 중 하나라도 걸리면 파이프라인이 중단되고 기존 `paper_id`를 알려줌. 그래도 강제로 추가하고 싶으면 `--force` 옵션 사용:
+```
+python3 main.py papers/논문.pdf --force
+```
+
+이 기능이 생기기 전에 이미 등록해둔 논문들은 최초 1회 아래 스크립트로 레지스트리를 채워야 함 (이미 실행해둔 상태, 새로 논문을 추가하는 거면 다시 돌릴 필요 없음):
+```
+python3 backfill_paper_registry.py
+```
+
+---
+
 **명령어 정리**
 
 논문들은 paper-rag-llm 파일 안에 papers에 저장 되어 있고 모든 결과 값들은 results 파일 안에 저장 되어 있다.  
