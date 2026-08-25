@@ -149,6 +149,11 @@ def generate_search_query(project_notes: str, user_question: str, n: int = 2) ->
 
 '''
 2단계: 데이터 베이스에서 추론에 도움될만한 내용들을 가져옴
+
+pinned_paper_id: 사용자가 채팅 UI에서 "이 논문을 참고해줘"라고 지정한 논문 (없으면 None, 기존과 동일하게 동작)
+pin_mode:
+  - "broad" (우선참고): 전체 풀에서 일반 검색(top_k-2개) + 지정 논문 안에서만 따로 검색(2개)을 순위 무관하게 합침
+  - "narrow" (이것만): 전체 풀 검색은 아예 안 하고, 지정 논문 안에서만 검색해서 top_k개를 채움
 '''
 def hybrid_search_papers(
     queries,
@@ -158,6 +163,8 @@ def hybrid_search_papers(
     bm25_path: str = "results/bm25_corpus.json",
     top_k: int = 5,
     candidate_k: int = 15,
+    pinned_paper_id: str = None,
+    pin_mode: str = "broad",
 ) -> list:
     # 쿼리를 문자열 하나로 줘도, 리스트로 여러 개 줘도 둘 다 동작하게
     if isinstance(queries, str):
@@ -173,22 +180,59 @@ def hybrid_search_papers(
         bm25_entries = json.load(f)
 
     model = get_embedding_model()
-
-    # 쿼리마다 벡터/BM25 순위 리스트를 따로 뽑고, 전부 한 번에 RRF로 병합
-    # (쿼리 1개짜리 호출과 동일하게 동작하면서, 여러 관점의 쿼리도 자연스럽게 합쳐짐)
-    rank_lists = []
-    for q in queries:
-        query_vector = model.encode([q], normalize_embeddings=True)[0].tolist()
-        rank_lists.append(search_top_k(query_vector, vectors, top_k=candidate_k))
-        rank_lists.append(search_bm25_top_k(q, bm25_entries, top_k=candidate_k))
-
-    fused = reciprocal_rank_fusion(*rank_lists, k=60)
-    final_results = fused[:top_k]
-
     chunk_lookup = build_chunk_lookup(chunks)
-    enriched = attach_context(final_results, chunk_lookup, sections_store)
-    sections_for_llm = dedupe_sections(enriched)  # 논문 결과. PPT/타 프로젝트 노하우는 애초에 이 DB에 안 들어있음
-    return sections_for_llm
+
+    # 주어진 벡터/BM25 풀(vectors_pool, bm25_pool)에서 쿼리별로 검색해서 RRF로 합친 뒤 top-k개 반환
+    # (풀을 전체로 주면 기존 방식, 특정 paper_id만 걸러서 주면 그 논문 안에서만 검색하는 셈)
+    def search_pool(vectors_pool, bm25_pool, k):
+        if not vectors_pool and not bm25_pool:
+            return []
+        rank_lists = []
+        for q in queries:
+            if vectors_pool:
+                query_vector = model.encode([q], normalize_embeddings=True)[0].tolist()
+                rank_lists.append(search_top_k(query_vector, vectors_pool, top_k=candidate_k))
+            if bm25_pool:
+                rank_lists.append(search_bm25_top_k(q, bm25_pool, top_k=candidate_k))
+        if not rank_lists:
+            return []
+        fused = reciprocal_rank_fusion(*rank_lists, k=60)
+        return fused[:k]
+
+    def to_sections(results, is_pinned=False):
+        enriched = attach_context(results, chunk_lookup, sections_store)
+        sections = dedupe_sections(enriched)
+        if is_pinned:
+            for s in sections:
+                s["is_pinned"] = True
+        return sections
+
+    if pinned_paper_id:
+        pinned_vectors = [v for v in vectors if v["paper_id"] == pinned_paper_id]
+        pinned_bm25 = [b for b in bm25_entries if b["paper_id"] == pinned_paper_id]
+
+        if pin_mode == "narrow":
+            # 이것만: 전체 풀 검색 없이, 지정 논문 안에서만 top_k개
+            pinned_results = search_pool(pinned_vectors, pinned_bm25, top_k)
+            return to_sections(pinned_results, is_pinned=True)
+
+        # broad(우선참고): 일반 검색 자리를 top_k-2로 줄이고, 지정 논문 몫 2개를 강제로 더함
+        general_k = max(top_k - 2, 1)
+        general_results = search_pool(vectors, bm25_entries, general_k)
+        pinned_results = search_pool(pinned_vectors, pinned_bm25, 2)
+
+        sections_general = to_sections(general_results)
+        sections_pinned = to_sections(pinned_results, is_pinned=True)
+
+        # 일반 검색에서도 지정 논문의 같은 섹션이 우연히 뽑혔으면 중복 방지 (지정 쪽을 우선시)
+        pinned_keys = {(s["paper_id"], s["section_id"]) for s in sections_pinned}
+        sections_general = [s for s in sections_general if (s["paper_id"], s["section_id"]) not in pinned_keys]
+
+        return sections_pinned + sections_general
+
+    # 지정 논문 없음 -> 기존과 동일하게 전체 풀에서 top_k개
+    final_results = search_pool(vectors, bm25_entries, top_k)
+    return to_sections(final_results)  # 논문 결과. PPT/타 프로젝트 노하우는 애초에 이 DB에 안 들어있음
 
 
 '''
@@ -197,7 +241,8 @@ def hybrid_search_papers(
 def format_paper_sections_for_prompt(sections_for_llm: list) -> str:
     blocks = []
     for s in sections_for_llm:
-        block = f"[논문DB: {s['paper_id']}] {s['section_head']}\n{s['section_text']}"
+        tag = "지정논문" if s.get("is_pinned") else "논문DB"
+        block = f"[{tag}: {s['paper_id']}] {s['section_head']}\n{s['section_text']}"
         # 텍스트만 가기로 했으므로(우선은), 표/그림 캡션 텍스트는 넣되 이미지 첨부는 안 함
         tf_text = format_tables_and_figures(s["section_tables"], s["section_figures"])
         if tf_text:
@@ -265,12 +310,29 @@ def generate_final_answer(project_notes: str, paper_results: list, web_results: 
     paper_section = format_paper_sections_for_prompt(paper_results) if paper_results else "(없음)"
     web_section = web_results if web_results else "(없음)"
 
-    # TODO: 출처 태그 규칙을 규칙 문장으로 명시
+    # 맨 앞에서 역할/과제를 먼저 규정 -> 뒤에 나오는 긴 자료들을 "종합해서 추천할 재료"로 읽게 하려는 목적
+    role_framing = """당신은 BeyondCaptur의 R&D 자문 역할입니다. 지금부터 제공되는 자료(우리 프로젝트의
+배경과 노하우, 논문 데이터베이스 검색 결과, 웹서치 결과)는 전부 아래 질문에 대해
+우리 상황에 맞는 다음 실험 방향을 추론하기 위한 재료입니다. 단순히 자료를 요약하는
+것이 아니라, 이 재료들을 종합해서 우리에게 실제로 도움이 될 구체적인 판단과 추천을
+만들어내는 것이 당신의 역할입니다."""
+
     instructions = """
 답변 작성 규칙:
 - 논문 데이터베이스에서 가져온 내용은 [논문DB: paper_id] 형식으로 짧게 표시
+- [지정논문: paper_id]로 표시된 내용은 사용자가 직접 지정한 논문에서 가져온 것이므로,
+  다른 논문DB/웹서치 내용보다 우선적으로 참고하고 답변의 중심 근거로 삼을 것
 - 웹서치에서 가져온 내용은 [웹서치] 로만 표시
 - 프로젝트 노하우 자체 내용은 출처 표시 없이 자연스럽게 서술
+- 자료를 단순히 나열하지 말고, 위 배경설명에 적힌 우리의 목표와 제약조건에 비춰서
+  어떤 내용이 우리 상황에 실제로 적용 가능한지, 어떤 내용은 맞지 않는지 판단해서 서술할 것
+- 가능하다면 다음에 시도해볼 만한 구체적인 실험 방향이나 접근법을 제안할 것
+  (일반적인 조언이 아니라, 우리 상황에 맞춘 구체적인 제안일 것)
+- 근거가 얇거나 자료와 우리 상황이 잘 맞지 않으면, 확신에 찬 것처럼 서술하지 말고
+  그 한계를 솔직히 밝힐 것
+
+다시 한 번 강조하면: 지금 당신의 역할은 단순 요약이 아니라, 위 자료를 근거로
+우리 상황에 맞는 다음 스텝을 추론해서 제안하는 것입니다.
 """
 
     # paper_results에 딸린 그림(figure)들 중 실제 이미지 파일이 있는 것만 모아서
@@ -301,7 +363,10 @@ def generate_final_answer(project_notes: str, paper_results: list, web_results: 
         )
 
     # 프롬프트 순서 원칙(트랙 A 세션 결론과 동일): 긴 문서 먼저, 규칙은 질문 바로 앞, 질문은 맨 마지막
-    prompt = f"""{project_notes}
+    # + 맨 앞에 역할/과제 프레이밍 추가 (아직 우리 데이터로 검증은 안 된 구조라 실험적으로 적용)
+    prompt = f"""{role_framing}
+
+{project_notes}
 
 논문DB 검색 결과:
 {paper_section}
@@ -331,6 +396,8 @@ def run_reasoning(
     bm25_path: str = "results/bm25_corpus.json",
     top_k: int = 5,
     candidate_k: int = 15,
+    pinned_paper_id: str = None,
+    pin_mode: str = "broad",
 ) -> str:
     project_notes = load_project_context(background_path, notes_path)
 
@@ -343,6 +410,8 @@ def run_reasoning(
         bm25_path=bm25_path,
         top_k=top_k,
         candidate_k=candidate_k,
+        pinned_paper_id=pinned_paper_id,
+        pin_mode=pin_mode,
     )
 
     web_results = ""
