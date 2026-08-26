@@ -66,7 +66,10 @@ def call_claude(prompt: str, model: str = MODEL, max_tokens: int = 4096) -> str:
         messages=[{"role": "user", "content": prompt}],
     )
     text_parts = [block.text for block in response.content if block.type == "text"]
-    return "\n".join(text_parts)
+    text = "\n".join(text_parts)
+    if response.stop_reason == "max_tokens":
+        text += "\n\n⚠️ *(답변이 토큰 제한으로 중간에 잘렸습니다. 질문을 나눠서 다시 물어보세요.)*"
+    return text
 
 
 '''
@@ -96,7 +99,10 @@ def call_claude_with_images(prompt: str, image_paths: list = None, model: str = 
         messages=[{"role": "user", "content": content}],
     )
     text_parts = [block.text for block in response.content if block.type == "text"]
-    return "\n".join(text_parts)
+    text = "\n".join(text_parts)
+    if response.stop_reason == "max_tokens":
+        text += "\n\n⚠️ *(답변이 토큰 제한으로 중간에 잘렸습니다. 질문을 나눠서 다시 물어보세요.)*"
+    return text
 
 
 '''
@@ -379,8 +385,8 @@ def generate_final_answer(project_notes: str, paper_results: list, web_results: 
 질문: {user_question}"""
 
     if image_paths:
-        return call_claude_with_images(prompt, image_paths=image_paths, max_tokens=4096)
-    return call_claude(prompt, max_tokens=4096)
+        return call_claude_with_images(prompt, image_paths=image_paths, max_tokens=16000)
+    return call_claude(prompt, max_tokens=16000)
 
 
 # ---------------------------------------------------------------------------
