@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BeyondCaptur</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='manage.css') }}" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22><text y=%2220%22 font-size=%2220%22>🌱</text></svg>" />
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 48 48" width="30" height="30">
+            <circle cx="24" cy="24" r="22" fill="#e7f5ec"/>
+            <path d="M24 34c-6 0-11-4.5-11-11 0-8 7-15 11-17 4 2 11 9 11 17 0 6.5-5 11-11 11z" fill="#2f9e6f"/>
+            <path d="M24 34V17" stroke="#e7f5ec" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <div class="brand-text">
+          <h1>Beyond Captur</h1>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="project-select" id="project-select">
+          <button class="project-select-chip" id="project-select-trigger" type="button">📁 <span id="project-select-label">프로젝트</span> ▾</button>
+          <div class="project-select-panel" id="project-select-panel"></div>
+        </div>
+        <span class="status-pill" id="status-pill">
+          <span class="dot"></span> 연결됨
+        </span>
+      </div>
+    </header>
+
+    <nav class="page-tabs">
+      <button class="page-tab active" id="tab-chat" data-panel="chat" type="button">💬 채팅</button>
+      <button class="page-tab" id="tab-manage" data-panel="manage" type="button">📋 노하우 · 논문 관리</button>
+    </nav>
+
+    <div class="page-panel active" id="panel-chat">
+      <main class="chat-area" id="chat-area">
+        <div class="msg msg-bot">
+          <div class="avatar">🌱</div>
+          <div class="bubble">
+            <p>안녕하세요! 저는 Beyond Captur 내부 연구진을 위한 RAG 챗봇이에요.</p>
+            <p>논문 데이터베이스와 프로젝트 노하우를 참고해서 답변을 도와드릴게요.</p>
+            <p>궁금한 점을 자유롭게 물어보세요 🌿</p>
+          </div>
+        </div>
+      </main>
+
+      <div class="composer">
+        <div class="pin-row">
+          <button class="pin-trigger" id="pin-trigger" type="button">
+            <span>📎</span> 참고 논문 지정
+          </button>
+
+          <div class="pin-chip" id="pin-chip">
+            <span class="pin-icon">📌</span>
+            <span class="pin-title" id="pin-title"></span>
+            <button class="pin-remove" id="pin-remove" type="button" aria-label="지정 해제">✕</button>
+          </div>
+
+          <div class="pin-mode" id="pin-mode">
+            <button class="selected" data-mode="broad" type="button">우선참고</button>
+            <button data-mode="narrow" type="button">이것만</button>
+          </div>
+
+          <div class="pin-panel" id="pin-panel">
+            <div class="pin-panel-search">
+              <input id="pin-search" type="text" placeholder="논문 제목으로 검색..." autocomplete="off" />
+            </div>
+            <div class="pin-list" id="pin-list"></div>
+          </div>
+        </div>
+
+        <form id="chat-form" autocomplete="off">
+          <textarea
+            id="chat-input"
+            rows="1"
+            placeholder="예: 이 소재의 탄소포집 성능을 높이려면 어떻게 해야할까?"
+            maxlength="2000"
+          ></textarea>
+          <button type="submit" id="send-btn" aria-label="보내기">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none">
+              <path d="M3 11.5L20.5 4 13 21l-2.2-6.8L3 11.5z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </form>
+        <p class="hint">AI는 실수를 할 수 있습니다. 항상 내용을 다시한번 생각해주세요! · 사내 연구용 자료이니 외부 공유는 주의해주세요!</p>
+      </div>
+    </div>
+
+    <div class="page-panel" id="panel-manage">
+      <main class="manage-body">
+        <section class="manage-card">
+          <div class="manage-card-header">
+            <h2>노하우</h2>
+            <div class="project-tabs" id="project-tabs"></div>
+          </div>
+
+          <div class="manage-card-body">
+            <div>
+              <div class="section-label" id="add-entry-label">📝 실험 기록 추가</div>
+              <div class="add-entry-card">
+                <div class="field-row">
+                  <span class="date-stamp" id="date-stamp"></span>
+                  <input class="title-input" id="entry-title" type="text" placeholder="예: 아연 대신 주석(Sn) 사용" />
+                </div>
+                <textarea class="body-textarea" id="entry-body" placeholder="실험 내용, 결과, 다음 계획을 자유롭게 적어주세요..."></textarea>
+                <button class="save-btn" id="save-entry-btn" type="button">저장</button>
+              </div>
+            </div>
+
+            <details class="log-panel" id="log-panel">
+              <summary>
+                <span id="log-summary">전체 노하우 보기</span>
+                <span class="chev">▸</span>
+              </summary>
+              <pre class="log-raw" id="log-raw"></pre>
+            </details>
+          </div>
+        </section>
+
+        <section class="manage-card">
+          <div class="manage-card-header">
+            <h2>논문 업로드</h2>
+          </div>
+          <div class="manage-card-body">
+            <div class="dropzone" id="dropzone">
+              <span class="dz-icon">📄</span>
+              PDF를 여기로 끌어다 놓거나 클릭해서 선택하세요
+            </div>
+            <input type="file" id="file-input" accept="application/pdf" style="display: none;" />
+
+            <div class="dup-warning" id="dup-warning"></div>
+            <div class="upload-error" id="upload-error"></div>
+
+            <div class="upload-log" id="upload-log"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

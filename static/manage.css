@@ -1,0 +1,292 @@
+.manage-body {
+  padding: 20px 24px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.manage-card {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.manage-card-header {
+  padding: 16px 20px;
+  background: linear-gradient(135deg, var(--mist-050), var(--mist-100));
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.manage-card-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--forest-900);
+}
+
+.manage-card-body {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 프로젝트 탭 */
+.project-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.project-tab {
+  font-size: 12.5px;
+  font-family: inherit;
+  color: var(--ink-soft);
+  background: var(--cream);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 13px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.project-tab.active {
+  background: var(--forest-500);
+  border-color: var(--forest-500);
+  color: white;
+  font-weight: 600;
+}
+
+.project-tab.add-new {
+  border-style: dashed;
+  color: var(--ink-soft);
+}
+
+/* 실험 기록 추가 */
+.section-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--forest-900);
+  margin-bottom: 8px;
+}
+
+.add-entry-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--mist-050);
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.date-stamp {
+  font-size: 12px;
+  color: var(--ink-soft);
+  background: var(--cream);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.title-input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--cream);
+  color: var(--ink);
+  outline: none;
+}
+
+.title-input:focus { border-color: var(--forest-500); }
+
+.body-textarea {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--cream);
+  color: var(--ink);
+  outline: none;
+  resize: vertical;
+  min-height: 70px;
+  line-height: 1.5;
+}
+
+.body-textarea:focus { border-color: var(--forest-500); }
+
+.save-btn {
+  align-self: flex-end;
+  border: none;
+  background: var(--forest-500);
+  color: white;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.save-btn:hover { background: var(--forest-700); }
+.save-btn:disabled { background: #b9d9c6; cursor: not-allowed; }
+
+/* 전체 노하우 보기 */
+.log-panel summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 2px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--forest-900);
+}
+
+.log-panel summary::-webkit-details-marker { display: none; }
+.log-panel summary .chev { transition: transform 0.15s ease; color: var(--ink-soft); }
+.log-panel[open] summary .chev { transform: rotate(90deg); }
+
+.log-raw {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--ink);
+  line-height: 1.6;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 4px 2px 2px;
+  padding: 12px;
+  background: var(--mist-050);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+/* 논문 업로드 */
+.dropzone {
+  border: 1.5px dashed var(--border);
+  border-radius: 12px;
+  padding: 22px;
+  text-align: center;
+  color: var(--ink-soft);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.dropzone:hover, .dropzone.drag {
+  border-color: var(--forest-500);
+  background: var(--mist-050);
+}
+
+.dropzone .dz-icon { font-size: 22px; display: block; margin-bottom: 6px; }
+
+.upload-log {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--ink);
+  color: #d7ecdf;
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-family: "SF Mono", "Menlo", monospace;
+  font-size: 11.5px;
+  line-height: 1.7;
+}
+
+.upload-log.active { display: flex; }
+
+.upload-log .step { opacity: 0.55; }
+.upload-log .step.done { opacity: 1; color: var(--leaf-400); }
+.upload-log .step .dot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-right: 8px;
+}
+
+.dup-warning,
+.upload-error {
+  display: none;
+  align-items: flex-start;
+  gap: 8px;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+}
+
+.dup-warning.active,
+.upload-error.active {
+  display: flex;
+}
+
+.dup-warning {
+  background: #fbf3df;
+  border: 1px solid #b8860b;
+  color: var(--ink);
+}
+
+.upload-error {
+  background: #fdf1ef;
+  border: 1px solid #f3c8c0;
+  color: #9a3b2c;
+}
+
+/* 새 프로젝트 이름 입력용 (간단한 prompt 대체 인라인 폼) */
+.new-project-form {
+  display: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.new-project-form.active {
+  display: inline-flex;
+}
+
+.new-project-form input {
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-family: inherit;
+  outline: none;
+  width: 120px;
+}
+
+.new-project-form input:focus {
+  border-color: var(--forest-500);
+}
+
+.new-project-form button {
+  font-size: 12px;
+  border: none;
+  background: var(--forest-500);
+  color: white;
+  border-radius: 999px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-family: inherit;
+}
