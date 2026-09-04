@@ -47,6 +47,7 @@ from paper_registry import (
     save_registry,
     find_by_file_hash,
     find_by_doi,
+    find_by_abstract,
     register_paper,
 )
 
@@ -139,6 +140,20 @@ def run_pipeline(pdf_path: str, paper_id: str, server: str,
             match_type="doi",
         )
 
+    # === 중복 체크 3차: 초록 내용 ===
+    # DOI가 없거나 잘려서(예: 저널 접두사만 뽑힌 경우) 2차 체크를 못 했을 때를 대비한 안전장치.
+    # 초록 본문이 거의 동일하면 DOI/파일명이 달라도 같은 논문으로 판단.
+    abstract = grobid_doc.get("abstract", "")
+    existing_by_abstract = find_by_abstract(registry, abstract)
+    if existing_by_abstract and not force:
+        raise DuplicatePaperError(
+            f"초록 내용이 이미 등록된 논문과 거의 동일합니다 (기존 paper_id: '{existing_by_abstract}'). "
+            f"DOI나 파일명이 달라도 같은 논문으로 보입니다. "
+            f"그래도 추가하려면 --force 옵션을 사용하세요.",
+            existing_paper_id=existing_by_abstract,
+            match_type="abstract",
+        )
+
     grobid_out_path = os.path.join(results_dir, f"{pdf_filename}_grobid.json")
     with open(grobid_out_path, "w", encoding="utf-8") as f:
         json.dump(grobid_doc, f, ensure_ascii=False, indent=2)
@@ -207,7 +222,7 @@ def run_pipeline(pdf_path: str, paper_id: str, server: str,
 
     # 여기까지 왔으면 메타데이터 파싱+청킹은 끝난 상태 -> 중복 체크용 레지스트리에 등록
     # (임베딩 완료 여부와 무관하게, 이후 같은 논문이 다시 들어오는 걸 잡아내는 게 목적)
-    register_paper(registry, paper_id, file_hash=file_hash, doi=doi, source_filename=os.path.basename(pdf_path))
+    register_paper(registry, paper_id, file_hash=file_hash, doi=doi, source_filename=os.path.basename(pdf_path), abstract=abstract)
     save_registry(registry, registry_path)
 
     # === 5) 임베딩 ===

@@ -1,0 +1,7 @@
+flask
+anthropic
+docling
+lxml
+rank_bm25
+requests
+sentence_transformers

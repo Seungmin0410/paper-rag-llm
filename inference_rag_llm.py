@@ -37,6 +37,11 @@ FAST_MODEL = "claude-haiku-4-5-20251001"   # 쿼리 생성·충분성 판단용 
 BACKGROUND_PATH = "background.txt"
 NOTES_PATH = "notes.txt"
 
+
+class ChatCancelled(Exception):
+    """사용자가 답변 생성 도중 취소한 경우 (남은 단계 건너뛰기용)"""
+    pass
+
 # vector_search.py의 load_model()이 SentenceTransformer를 매번 새로 로딩하면 느림
 # -> 여기서 한 번만 로딩해서 재사용 (모듈 레벨 캐싱)
 _embedding_model = None
@@ -404,10 +409,20 @@ def run_reasoning(
     candidate_k: int = 15,
     pinned_paper_id: str = None,
     pin_mode: str = "broad",
+    is_cancelled=None,
 ) -> str:
+    # is_cancelled: 인자 없이 호출하면 True/False를 반환하는 콜백. 각 단계 시작 전에 확인해서
+    # 취소됐으면 그 뒤로 이어지는(비용이 드는) 단계를 더 이상 진행하지 않음.
+    def check_cancelled():
+        if is_cancelled is not None and is_cancelled():
+            raise ChatCancelled()
+
     project_notes = load_project_context(background_path, notes_path)
+    check_cancelled()
 
     queries = generate_search_query(project_notes, user_question)
+    check_cancelled()
+
     paper_results = hybrid_search_papers(
         queries,
         chunks_path=chunks_path,
@@ -419,10 +434,13 @@ def run_reasoning(
         pinned_paper_id=pinned_paper_id,
         pin_mode=pin_mode,
     )
+    check_cancelled()
 
     web_results = ""
     if not is_sufficient(paper_results, user_question):
+        check_cancelled()
         web_results = web_search_fallback(user_question)
+    check_cancelled()
 
     answer = generate_final_answer(project_notes, paper_results, web_results, user_question)
     return answer

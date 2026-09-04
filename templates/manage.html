@@ -43,11 +43,7 @@
       <main class="chat-area" id="chat-area">
         <div class="msg msg-bot">
           <div class="avatar">🌱</div>
-          <div class="bubble">
-            <p>안녕하세요! 저는 Beyond Captur 내부 연구진을 위한 RAG 챗봇이에요.</p>
-            <p>논문 데이터베이스와 프로젝트 노하우를 참고해서 답변을 도와드릴게요.</p>
-            <p>궁금한 점을 자유롭게 물어보세요 🌿</p>
-          </div>
+          <div class="bubble notice"><p><strong>⚠️ 사용 전 꼭 확인해주세요</strong></p><ul><li>주소 링크 절대절대절대 외부 유출 금지</li><li>실험기록 꼭꼭 추가해주기 (실험이 잘 안되거나 중단했을 때도 기록)</li><li>큰 그림 잡는 용도로만 사용하기</li><li>동일 컴퓨터·동일 브라우저로 계속 사용하기 (예: 하람님 랩탑 크롬 쓰다가 사파리 쓰면 안 됨)</li><li>답변에 있는 [논문DB: ...] 태그 클릭하면 원본 PDF 확인 가능 (파싱 과정에서 그림·표가 일부 누락될 수 있어서, 중요한 근거는 원본으로 한번 더 확인해주세요)</li></ul></div>
         </div>
       </main>
 
@@ -107,9 +103,11 @@
               <div class="add-entry-card">
                 <div class="field-row">
                   <span class="date-stamp" id="date-stamp"></span>
-                  <input class="title-input" id="entry-title" type="text" placeholder="예: 아연 대신 주석(Sn) 사용" />
+                  <input class="title-input" id="entry-title" type="text" placeholder="예: [AL3_07] 이전 실험에서 Cell D -> Cell C로 교체" />
                 </div>
-                <textarea class="body-textarea" id="entry-body" placeholder="실험 내용, 결과, 다음 계획을 자유롭게 적어주세요..."></textarea>
+                <textarea class="body-textarea" id="entry-body" placeholder="결과: 불균형은 사라짐. 그러나 셀 저항 여전히 높고 탈착 안 나옴. CV 개형은 더 악화
+노하우: 체결 불균형은 Cell C로 해결된다. 그러나 저항·탈착 문제는 별개 원인이다.
+계획: 그래서 ~식으로 실험 진행 예정이다."></textarea>
                 <button class="save-btn" id="save-entry-btn" type="button">저장</button>
               </div>
             </div>

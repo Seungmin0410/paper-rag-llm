@@ -32,6 +32,25 @@ const logRaw = document.getElementById("log-raw");
 let projects = [];
 let selectedProjectId = localStorage.getItem(PROJECT_STORAGE_KEY) || "";
 
+// crypto.randomUUID()는 "보안 컨텍스트"(HTTPS 또는 localhost)에서만 동작해서,
+// Tailscale IP처럼 HTTP로 접속하는 다른 사람 브라우저에서는 여기서 에러가 나면서
+// 이 파일의 나머지 코드가 전부 실행되지 않는 문제가 있었음 -> 의존 없는 방식으로 대체.
+function generateId() {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+// ---------- 채팅 기록용 세션 ID (사람/브라우저별로 분리 저장하기 위함, AI 프롬프트엔 안 들어감) ----------
+const SESSION_STORAGE_KEY = "bc_chat_session_id";
+let chatSessionId = localStorage.getItem(SESSION_STORAGE_KEY);
+if (!chatSessionId) {
+  chatSessionId = generateId();
+  localStorage.setItem(SESSION_STORAGE_KEY, chatSessionId);
+}
+
 function countEntries(text) {
   return text.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean).length;
 }
@@ -189,71 +208,89 @@ dropzone.addEventListener("click", () => fileInput.click());
   })
 );
 dropzone.addEventListener("drop", (e) => {
-  const file = e.dataTransfer.files[0];
-  if (file) uploadFile(file);
+  uploadFiles(e.dataTransfer.files);
 });
 fileInput.addEventListener("change", () => {
-  if (fileInput.files[0]) uploadFile(fileInput.files[0]);
+  uploadFiles(fileInput.files);
   fileInput.value = "";
 });
 
-function renderSteps(steps) {
+function renderSteps(steps, allDone = false) {
   uploadLog.classList.add("active");
   uploadLog.innerHTML = steps
-    .map((s, i) => `<div class="step${i === steps.length - 1 ? "" : " done"}"><span class="dot"></span>${s}</div>`)
+    .map((s, i) => `<div class="step${(allDone || i !== steps.length - 1) ? " done" : ""}"><span class="dot"></span>${s}</div>`)
     .join("");
 }
 
-async function uploadFile(file) {
+// 여러 파일을 한꺼번에 드래그해도, 서버 부하 때문에 동시에 안 돌리고 하나씩 순서대로 처리
+async function uploadFiles(fileList) {
+  const files = Array.from(fileList || []);
+  for (let i = 0; i < files.length; i++) {
+    const label = files.length > 1 ? `[${i + 1}/${files.length}] ${files[i].name}` : null;
+    await uploadOneFile(files[i], label);
+  }
+}
+
+function uploadOneFile(file, label) {
   dupWarning.classList.remove("active");
   uploadError.classList.remove("active");
   uploadLog.classList.remove("active");
   uploadLog.innerHTML = "";
 
+  const prefix = label ? `${label} — ` : "";
+
   if (!file.name.toLowerCase().endsWith(".pdf")) {
     uploadError.classList.add("active");
-    uploadError.textContent = "PDF 파일만 업로드할 수 있어요.";
-    return;
+    uploadError.textContent = `${prefix}PDF 파일만 업로드할 수 있어요.`;
+    return Promise.resolve();
   }
 
   const formData = new FormData();
   formData.append("file", file);
 
-  let jobId;
-  try {
-    const res = await fetch("/api/papers/upload", { method: "POST", body: formData });
-    const data = await res.json();
-    if (!res.ok || data.error) {
+  return fetch("/api/papers/upload", { method: "POST", body: formData })
+    .then(async (res) => {
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        uploadError.classList.add("active");
+        uploadError.textContent = `${prefix}${data.error || "업로드에 실패했어요."}`;
+        return;
+      }
+      return pollUploadStatus(data.job_id, label);
+    })
+    .catch(() => {
       uploadError.classList.add("active");
-      uploadError.textContent = data.error || "업로드에 실패했어요.";
-      return;
-    }
-    jobId = data.job_id;
-  } catch (err) {
-    uploadError.classList.add("active");
-    uploadError.textContent = "서버와 연결할 수 없어요.";
-    return;
-  }
+      uploadError.textContent = `${prefix}서버와 연결할 수 없어요.`;
+    });
+}
 
-  const poll = async () => {
-    const res = await fetch(`/api/papers/upload/status/${jobId}`);
-    const job = await res.json();
+function pollUploadStatus(jobId, label) {
+  return new Promise((resolve) => {
+    const prefix = label ? `${label} — ` : "";
+    const check = async () => {
+      const res = await fetch(`/api/papers/upload/status/${jobId}`);
+      const job = await res.json();
+      const steps = label ? [label, ...(job.steps || [])] : (job.steps || []);
 
-    if (job.steps && job.steps.length) renderSteps(job.steps);
+      if (job.steps && job.steps.length) renderSteps(steps);
 
-    if (job.status === "running") {
-      setTimeout(poll, 800);
-    } else if (job.status === "duplicate") {
-      dupWarning.classList.add("active");
-      dupWarning.innerHTML = `⚠️&nbsp; ${job.message}`;
-    } else if (job.status === "error") {
-      uploadError.classList.add("active");
-      uploadError.textContent = job.message || "처리 중 오류가 발생했어요.";
-    } else if (job.status === "done") {
-      renderSteps([...(job.steps || []), `✅ ${job.message}`]);
-    }
-  };
-  poll();
+      if (job.status === "running") {
+        setTimeout(check, 800);
+      } else if (job.status === "duplicate") {
+        dupWarning.classList.add("active");
+        dupWarning.innerHTML = `⚠️&nbsp; ${prefix}${job.message}`;
+        resolve();
+      } else if (job.status === "error") {
+        uploadError.classList.add("active");
+        uploadError.textContent = `${prefix}${job.message || "처리 중 오류가 발생했어요."}`;
+        resolve();
+      } else if (job.status === "done") {
+        renderSteps([...steps, `✅ ${job.message}`], true);
+        resolve();
+      }
+    };
+    check();
+  });
 }
 
 // ---------- 채팅 ----------
@@ -289,8 +326,15 @@ function escapeHtml(str) {
 // 한 줄 안에서: [논문DB: paper_id] / [웹서치] 태그 강조 + **bold** 렌더링 (이스케이프 후 처리)
 function formatInline(line) {
   return escapeHtml(line)
-    .replace(/\[(지정논문:[^\]]+)\]/g, '<span class="source-tag source-tag-pinned">[$1]</span>')
-    .replace(/\[(논문DB:[^\]]+|웹서치)\]/g, '<span class="source-tag">[$1]</span>')
+    .replace(
+      /\[지정논문:\s*([^\]]+)\]/g,
+      '<a class="source-tag source-tag-pinned" href="/api/papers/$1/pdf" target="_blank" rel="noopener">[지정논문: $1]</a>'
+    )
+    .replace(
+      /\[논문DB:\s*([^\]]+)\]/g,
+      '<a class="source-tag" href="/api/papers/$1/pdf" target="_blank" rel="noopener">[논문DB: $1]</a>'
+    )
+    .replace(/\[웹서치\]/g, '<span class="source-tag">[웹서치]</span>')
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
 }
 
@@ -420,9 +464,14 @@ function addTypingBubble() {
   return bubble;
 }
 
+const SEND_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M3 11.5L20.5 4 13 21l-2.2-6.8L3 11.5z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+const STOP_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>`;
+
 function setBusy(isBusy) {
   chatInput.disabled = isBusy;
-  sendBtn.disabled = isBusy;
+  sendBtn.classList.toggle("cancel-mode", isBusy);
+  sendBtn.innerHTML = isBusy ? STOP_ICON : SEND_ICON;
+  sendBtn.setAttribute("aria-label", isBusy ? "중단" : "보내기");
   statusPill.innerHTML = isBusy
     ? `<span class="dot"></span> 검색 중`
     : `<span class="dot"></span> 연결됨`;
@@ -503,34 +552,71 @@ document.addEventListener("click", (e) => {
   }
 });
 
+let currentAbortController = null;
+let currentRequestId = null;
+
+function cancelCurrentRequest() {
+  if (currentAbortController) currentAbortController.abort();
+  if (currentRequestId) {
+    fetch("/api/chat/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request_id: currentRequestId }),
+    }).catch(() => {});
+  }
+}
+
+sendBtn.addEventListener("click", (e) => {
+  if (sendBtn.classList.contains("cancel-mode")) {
+    e.preventDefault();
+    cancelCurrentRequest();
+  }
+});
+
 async function sendMessage(text) {
   addMessage("user", escapeHtml(text));
   setBusy(true);
   const typingBubble = addTypingBubble();
 
+  const requestId = generateId();
+  currentRequestId = requestId;
+  const controller = new AbortController();
+  currentAbortController = controller;
+
   try {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
       body: JSON.stringify({
         message: text,
         pinned_paper_id: pinnedPaperId,
         pin_mode: pinModeValue,
         project_id: selectedProjectId,
+        session_id: chatSessionId,
+        request_id: requestId,
       }),
     });
     const data = await res.json();
 
-    if (!res.ok || data.error) {
+    if (data.cancelled) {
+      typingBubble.innerHTML = "🛑 중단되었습니다.";
+    } else if (!res.ok || data.error) {
       typingBubble.classList.add("error");
       typingBubble.innerHTML = `🍂 ${escapeHtml(data.error || "알 수 없는 오류가 발생했어요.")}`;
     } else {
       typingBubble.innerHTML = formatAnswer(data.answer || "(빈 답변)");
     }
   } catch (err) {
-    typingBubble.classList.add("error");
-    typingBubble.innerHTML = "🍂 서버와 연결할 수 없어요. 잠시 후 다시 시도해주세요.";
+    if (err.name === "AbortError") {
+      typingBubble.innerHTML = "🛑 중단되었습니다.";
+    } else {
+      typingBubble.classList.add("error");
+      typingBubble.innerHTML = "🍂 서버와 연결할 수 없어요. 잠시 후 다시 시도해주세요.";
+    }
   } finally {
+    currentAbortController = null;
+    currentRequestId = null;
     setBusy(false);
     scrollToBottom();
     chatInput.focus();

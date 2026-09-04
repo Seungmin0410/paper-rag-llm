@@ -299,6 +299,7 @@ body {
   color: #9a3b2c;
 }
 
+
 .bubble .source-tag {
   display: inline-block;
   font-size: 11.5px;
@@ -307,12 +308,28 @@ body {
   border-radius: 6px;
   padding: 1px 6px;
   margin: 0 2px;
+  text-decoration: none;
+}
+
+a.bubble .source-tag,
+.bubble a.source-tag {
+  cursor: pointer;
+}
+
+.bubble a.source-tag:hover {
+  background: var(--mist-050);
+  text-decoration: underline;
 }
 
 .bubble .source-tag-pinned {
   color: white;
   background: var(--forest-500);
   font-weight: 600;
+}
+
+.bubble a.source-tag-pinned:hover {
+  background: var(--forest-700);
+  text-decoration: underline;
 }
 
 .bubble p {
@@ -330,6 +347,20 @@ body {
 
 .bubble li {
   margin: 0;
+}
+
+.bubble.notice {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.bubble.notice ul {
+  margin: 6px 0 0;
+}
+
+.bubble.notice li {
+  margin: 4px 0;
 }
 
 .bubble .ans-heading {
@@ -657,6 +688,14 @@ body {
 
 #send-btn:active:not(:disabled) {
   transform: scale(0.94);
+}
+
+#send-btn.cancel-mode {
+  background: #b5493a;
+}
+
+#send-btn.cancel-mode:hover {
+  background: #9a3b2c;
 }
 
 .hint {
